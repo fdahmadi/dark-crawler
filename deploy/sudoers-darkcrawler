@@ -1,0 +1,2 @@
+# Allow web UI user to start/check crawler units without a password.
+darkcrawler ALL=(root) NOPASSWD: /usr/bin/systemctl start dark-crawler.service, /usr/bin/systemctl restart dark-crawler.service, /usr/bin/systemctl is-active dark-crawler.service, /usr/bin/systemctl is-active dark-crawler-tor.service

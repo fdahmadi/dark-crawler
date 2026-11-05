@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Status · Dark Crawler{% endblock %}
+{% block heading %}Crawl status{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Service</h2>
+  <p>
+    Crawler:
+    {% if crawler_active %}
+      <span class="badge ok">running</span>
+    {% else %}
+      <span class="badge idle">idle / finished</span>
+    {% endif %}
+    &nbsp; Tor:
+    {% if tor_active %}
+      <span class="badge ok">up</span>
+    {% else %}
+      <span class="badge bad">down</span>
+    {% endif %}
+  </p>
+  <p class="muted mono">seed: {{ seed_url }}</p>
+  <p class="muted mono">db: {{ database_path }}</p>
+  {% if captcha_hint %}
+  <p><span class="badge warn">blocked</span> Latest page looks like a human-verification wall. <a href="/cookies">Paste session cookies</a> to continue past it.</p>
+  {% endif %}
+  <div class="actions">
+    <form method="post" action="/actions/start-crawl" onsubmit="return confirm('Start / restart crawl job?');">
+      <button class="btn" type="submit">Start crawl</button>
+    </form>
+  </div>
+</section>
+
+<section class="grid">
+  {% for key, value in stats_cards %}
+  <div class="stat">
+    <div class="label">{% if key == 'pages_403' %}403{% else %}{{ key }}{% endif %}</div>
+    <div class="value">{{ value }}</div>
+  </div>
+  {% endfor %}
+</section>
+
+<section class="panel">
+  <h2>Queue</h2>
+  {% if queue_rows %}
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Count</th></tr>
+    </thead>
+    <tbody>
+      {% for row in queue_rows %}
+      <tr><td class="mono">{{ row.status }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Queue is empty.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Recent pages</h2>
+  {% if recent_pages %}
+  <table>
+    <thead>
+      <tr><th>Fetched</th><th>Code</th><th>Title</th><th>URL</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for page in recent_pages %}
+      <tr>
+        <td class="mono">{{ page.fetched_at or '-' }}</td>
+        <td class="mono">{{ page.status_code or '-' }}</td>
+        <td>{{ page.title or '(no title)' }}</td>
+        <td class="url">{{ page.url }}</td>
+        <td>
+          {% if page.mirror_path %}
+          <a href="/mirror/{{ page.mirror_path }}">mirror</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No pages crawled yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

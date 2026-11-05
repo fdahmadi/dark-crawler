@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Database · Dark Crawler{% endblock %}
+{% block heading %}Database{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="tabs">
+    {% for name, count in tables %}
+    <a href="/db?table={{ name }}" class="{% if name == table %}active{% endif %}">{{ name }} ({{ count }})</a>
+    {% endfor %}
+  </div>
+
+  {% if mode == 'detail' %}
+    <p class="crumb"><a href="/db?table={{ table }}&q={{ q }}&page={{ page }}">{{ table }}</a> / {{ pk_value }}</p>
+    {% if not row %}
+      <p class="empty">Row not found.</p>
+    {% else %}
+      {% for key, value in row.items() %}
+      <div class="field">
+        <div class="label">{{ key }}</div>
+        {% if value is none or value == '' %}
+          <p class="muted">empty</p>
+        {% else %}
+          <pre>{{ value }}</pre>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  {% else %}
+    <form method="get" action="/db" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+      <input type="hidden" name="table" value="{{ table }}">
+      <input name="q" value="{{ q }}" placeholder="Search {{ table }}" style="flex:1;min-width:220px;padding:0.45rem 0.6rem;border:1px solid var(--line);border-radius:4px;font:inherit;">
+      <button class="btn" type="submit">Search</button>
+    </form>
+    <p class="muted">{{ total }} row{{ 's' if total != 1 else '' }}{% if q %} matching “{{ q }}”{% endif %}</p>
+    {% if rows %}
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            {% for col in columns %}<th>{{ col }}</th>{% endfor %}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            {% for col in columns %}
+            <td class="{% if col in ('url','from_url','to_url','title','name','username','post_url','profile_url','forum_url','thread_url') %}clip url{% else %}clip{% endif %}">{{ row[col] if row[col] is not none else '' }}</td>
+            {% endfor %}
+            <td><a href="/db?table={{ table }}&pk={{ row[pk]|urlencode }}&q={{ q|urlencode }}&page={{ page }}">open</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      {% if page > 1 %}
+      <a href="/db?table={{ table }}&q={{ q|urlencode }}&page={{ page - 1 }}">Previous</a>
+      {% endif %}
+      <span class="muted">Page {{ page }} / {{ pages }}</span>
+      {% if page < pages %}
+      <a href="/db?table={{ table }}&q={{ q|urlencode }}&page={{ page + 1 }}">Next</a>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="empty">No rows in {{ table }}.</p>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

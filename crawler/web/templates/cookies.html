@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Cookies · Dark Crawler{% endblock %}
+{% block heading %}Session cookies{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Paste the cookies from Tor Browser</h2>
+  <p>Open the forum in Tor Browser, finish <strong>Verify Humanity</strong>, then copy the cookies from the site and paste them here. The crawler sends them on the next run.</p>
+  <ol>
+    <li>In Tor Browser, open Developer Tools → Network, reload the forum, and copy the <span class="mono">Cookie</span> request header.</li>
+    <li>Or export a Netscape <span class="mono">cookies.txt</span> and paste that file.</li>
+    <li>Or paste a JSON list: <span class="mono">[{"name":"...","value":"..."}]</span></li>
+  </ol>
+  <p class="muted">Stored at <span class="mono">{{ cookie_path }}</span>. Values are not shown again after save.</p>
+  {% if saved %}
+  <p><span class="badge ok">saved</span> {{ saved_count }} cookie{{ 's' if saved_count != 1 else '' }} written{% if restarted %} and crawl restarted{% endif %}.</p>
+  {% endif %}
+  {% if error %}
+  <p><span class="badge bad">error</span> {{ error }}</p>
+  {% endif %}
+  <p>
+    Current file:
+    {% if names %}
+      <span class="badge ok">{{ names|length }} cookie{{ 's' if names|length != 1 else '' }}</span>
+      <span class="mono">{{ names|join(', ') }}</span>
+    {% else %}
+      <span class="badge idle">empty</span>
+    {% endif %}
+  </p>
+  <form method="post" action="/cookies">
+    <textarea name="cookies" rows="12" required placeholder="session=...; pf_verified=..." style="width:100%;padding:0.7rem;border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:0.85rem;"></textarea>
+    <label style="display:flex;gap:0.5rem;align-items:center;margin:0.8rem 0;">
+      <input type="checkbox" name="restart" value="1" checked>
+      Clear the verification page and restart the crawl
+    </label>
+    <button class="btn" type="submit">Save cookies</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,31 @@
+[Unit]
+Description=Dark Crawler forum archive job
+After=dark-crawler-tor.service
+Requires=dark-crawler-tor.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=darkcrawler
+Group=darkcrawler
+WorkingDirectory=/opt/dark-crawler
+Environment=PYTHONUNBUFFERED=1
+Environment=TOR_SOCKS_HOST=127.0.0.1
+Environment=TOR_SOCKS_PORT=19050
+Environment=CRAWL_MAX_PAGES=500
+Environment=CRAWL_CONCURRENCY=1
+Environment=CRAWL_DELAY_MIN=20
+Environment=CRAWL_DELAY_MAX=40
+ExecStartPre=/bin/sleep 15
+ExecStart=/opt/dark-crawler/.venv/bin/python -m crawler -c /opt/dark-crawler/config.yaml crawl
+Restart=on-failure
+RestartSec=30
+Nice=10
+MemoryMax=200M
+TasksMax=64
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+# Target forum (Tor hidden service)
+seed_url: "http://pwnfrm7rbf6kyerigxi677lcz5ifmoagdbqqknwdu2by27wfdst5qmqd.onion/"
+
+# Tor SOCKS5 proxy (Tor Browser: 9150, system tor: 9050)
+tor:
+  socks_host: "127.0.0.1"
+  socks_port: 9050
+  # Set true if you use Tor Browser instead of system tor
+  use_tor_browser_port: false
+
+crawl:
+  # Max pages to fetch in one run (0 = unlimited)
+  max_pages: 500
+  # Concurrent requests (keep low on Tor)
+  concurrency: 2
+  # Random pause between every HTTP request, including redirects
+  request_delay_min: 20
+  request_delay_max: 40
+  # HTTP timeout for onion sites (seconds)
+  timeout: 60
+  # Follow only links under the same onion host
+  same_host_only: true
+  # Skip binary / non-html resources
+  allowed_content_types:
+    - "text/html"
+    - "application/xhtml+xml"
+  # URL path patterns to skip (regex)
+  skip_patterns:
+    - "(logout|login|register|captcha|attachments?/download)"
+    - "\\.(jpg|jpeg|png|gif|webp|svg|ico|css|js|woff2?|ttf|mp4|zip|rar|7z|pdf)(\\?|$)"
+  user_agent: "DarkCrawler/1.0 (research archive; +local-mirror)"
+  # Optional Netscape/Mozilla cookies.txt for sessions you already own
+  cookies_file: ""
+  # Recheck HTTP 403 pages after this many seconds
+  retry_403_seconds: 1800
+
+storage:
+  database: "data/forum.db"
+  mirror_dir: "data/mirror"
+  # Save raw HTML mirror with rewritten local links
+  enable_mirror: true
+  # Also extract structured forum entities when possible
+  enable_structured_parse: true
+
+logging:
+  level: "INFO"
+  file: "data/crawler.log"

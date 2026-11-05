@@ -1,0 +1,23 @@
+[Unit]
+Description=Dark Crawler Tor SOCKS (127.0.0.1:19050)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=debian-tor
+Group=debian-tor
+RuntimeDirectory=dark-crawler-tor
+RuntimeDirectoryMode=0755
+ExecStart=/usr/bin/tor -f /opt/dark-crawler/deploy/torrc
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+Nice=5
+MemoryMax=250M
+TasksMax=256
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

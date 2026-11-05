@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Pages · Dark Crawler{% endblock %}
+{% block heading %}Crawled pages{% endblock %}
+{% block content %}
+<section class="panel">
+  <form method="get" action="/pages" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+    <input name="q" value="{{ q }}" placeholder="Search title / URL" style="flex:1;min-width:220px;padding:0.45rem 0.6rem;border:1px solid var(--line);border-radius:4px;font:inherit;">
+    <button class="btn" type="submit">Search</button>
+  </form>
+  {% if pages %}
+  <table>
+    <thead>
+      <tr><th>Fetched</th><th>Code</th><th>Title</th><th>URL</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for page in pages %}
+      <tr>
+        <td class="mono">{{ page.fetched_at or '-' }}</td>
+        <td class="mono">{{ page.status_code or '-' }}</td>
+        <td>{{ page.title or '(no title)' }}</td>
+        <td class="url">{{ page.url }}</td>
+        <td>
+          {% if page.mirror_path %}
+          <a href="/mirror/{{ page.mirror_path }}">open</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No matching pages.</p>
+  {% endif %}
+</section>
+{% endblock %}

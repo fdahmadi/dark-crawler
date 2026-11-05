@@ -1,0 +1,43 @@
+services:
+  tor:
+    build:
+      context: ./tor
+    image: dark-crawler-tor:local
+    container_name: dark-crawler-tor
+    restart: unless-stopped
+    # Optional host access for local debugging / run.sh
+    ports:
+      - "127.0.0.1:9050:9050"
+    volumes:
+      - tor-data:/var/lib/tor
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9050'"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+
+  crawler:
+    build:
+      context: .
+    image: dark-crawler-app:local
+    container_name: dark-crawler-app
+    # Exit cleanly after a finished crawl; restart only on crash
+    restart: on-failure
+    depends_on:
+      tor:
+        condition: service_healthy
+    environment:
+      TOR_SOCKS_HOST: tor
+      TOR_SOCKS_PORT: "9050"
+      TOR_WAIT_SECONDS: "300"
+      TOR_BOOTSTRAP_GRACE: "20"
+      CRAWL_MAX_PAGES: "${CRAWL_MAX_PAGES:-500}"
+    volumes:
+      # Persist DB + HTML mirror on the host
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    command: ["crawl"]
+
+volumes:
+  tor-data:

@@ -1,0 +1,33 @@
+# Server deploy config — Tor SOCKS on non-default localhost port
+seed_url: "http://pwnfrm7rbf6kyerigxi677lcz5ifmoagdbqqknwdu2by27wfdst5qmqd.onion/"
+
+tor:
+  socks_host: "127.0.0.1"
+  socks_port: 19050
+  use_tor_browser_port: false
+
+crawl:
+  max_pages: 500
+  concurrency: 1
+  request_delay_min: 20
+  request_delay_max: 40
+  timeout: 90
+  same_host_only: true
+  allowed_content_types:
+    - "text/html"
+    - "application/xhtml+xml"
+  skip_patterns:
+    - "(logout|login|register|captcha|attachments?/download)"
+    - "\\.(jpg|jpeg|png|gif|webp|svg|ico|css|js|woff2?|ttf|mp4|zip|rar|7z|pdf)(\\?|$)"
+  user_agent: "DarkCrawler/1.0 (research archive; +local-mirror)"
+  cookies_file: ""
+
+storage:
+  database: "data/forum.db"
+  mirror_dir: "data/mirror"
+  enable_mirror: true
+  enable_structured_parse: true
+
+logging:
+  level: "INFO"
+  file: "data/crawler.log"

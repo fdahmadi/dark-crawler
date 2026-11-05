@@ -1,0 +1,7 @@
+# SOCKS for the host crawler (published only to 127.0.0.1 in compose)
+SocksPort 0.0.0.0:9050
+DataDirectory /var/lib/tor
+Log notice stdout
+RunAsDaemon 0
+CookieAuthentication 0
+SafeLogging 1

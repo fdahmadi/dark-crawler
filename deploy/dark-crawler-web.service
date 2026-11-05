@@ -1,0 +1,27 @@
+[Unit]
+Description=Dark Crawler web UI (status + mirror)
+After=network.target
+Wants=dark-crawler-tor.service
+
+[Service]
+Type=simple
+User=darkcrawler
+Group=darkcrawler
+WorkingDirectory=/opt/dark-crawler
+Environment=PYTHONUNBUFFERED=1
+Environment=DARK_CRAWLER_ROOT=/opt/dark-crawler
+Environment=DARK_CRAWLER_CONFIG=/opt/dark-crawler/config.yaml
+Environment=WEB_UI_HOST=0.0.0.0
+Environment=WEB_UI_PORT=19810
+EnvironmentFile=-/opt/dark-crawler/deploy/web.env
+ExecStart=/opt/dark-crawler/.venv/bin/python -m crawler.webui
+Restart=on-failure
+RestartSec=5
+Nice=5
+MemoryMax=150M
+TasksMax=64
+# NoNewPrivileges must stay off so the UI can sudo systemctl restart the crawler.
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
