@@ -4,7 +4,7 @@
 {% block content %}
 <section class="panel">
   <h2>Paste the cookies from Tor Browser</h2>
-  <p>Open the forum in Tor Browser, finish <strong>Verify Humanity</strong>, then copy the cookies from the site and paste them here. The crawler sends them on the next run.</p>
+  <p>Open the forum in Tor Browser, finish <strong>Verify Humanity</strong>, then copy the cookies from the site and paste them here. The crawler sends them on the next run. Cookies the forum sends back are written into this file, and the crawl stays on one Tor circuit, so paste again only when the red alert appears.</p>
   <ol>
     <li>In Tor Browser, open Developer Tools → Network, reload the forum, and copy the <span class="mono">Cookie</span> request header.</li>
     <li>Or export a Netscape <span class="mono">cookies.txt</span> and paste that file.</li>

@@ -20,6 +20,7 @@ crawl:
     - "(logout|login|register|captcha|attachments?/download)"
     - "\\.(jpg|jpeg|png|gif|webp|svg|ico|css|js|woff2?|ttf|mp4|zip|rar|7z|pdf)(\\?|$)"
   user_agent: "DarkCrawler/1.0 (research archive; +local-mirror)"
+  # Netscape cookies.txt. The crawler also writes Set-Cookie updates back here.
   cookies_file: ""
 
 storage:

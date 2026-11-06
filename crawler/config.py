@@ -7,7 +7,7 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import yaml
 
@@ -40,6 +40,12 @@ def _env_float(name: str, default: float) -> float:
     return float(value)
 
 
+# Tor treats this pair as a circuit-isolation key, not as a login.
+# The same pair on every request keeps the crawl on one circuit.
+SOCKS_ISOLATION_USER = "dark-crawler"
+SOCKS_ISOLATION_PASSWORD = "pinned"
+
+
 @dataclass
 class TorConfig:
     socks_host: str = "127.0.0.1"
@@ -54,7 +60,9 @@ class TorConfig:
 
     @property
     def proxy_url(self) -> str:
-        return f"socks5h://{self.socks_host}:{self.port}"
+        user = quote(SOCKS_ISOLATION_USER, safe="")
+        password = quote(SOCKS_ISOLATION_PASSWORD, safe="")
+        return f"socks5h://{user}:{password}@{self.socks_host}:{self.port}"
 
 
 def _delay_bounds(crawl_raw: dict[str, Any]) -> tuple[float, float]:

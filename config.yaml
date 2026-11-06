@@ -29,7 +29,7 @@ crawl:
     - "(logout|login|register|captcha|attachments?/download)"
     - "\\.(jpg|jpeg|png|gif|webp|svg|ico|css|js|woff2?|ttf|mp4|zip|rar|7z|pdf)(\\?|$)"
   user_agent: "DarkCrawler/1.0 (research archive; +local-mirror)"
-  # Optional Netscape/Mozilla cookies.txt for sessions you already own
+  # Netscape cookies.txt. The crawler also writes Set-Cookie updates back here.
   cookies_file: ""
   # Recheck HTTP 403 pages after this many seconds
   retry_403_seconds: 1800

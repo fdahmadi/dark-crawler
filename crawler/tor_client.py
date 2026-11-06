@@ -5,13 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
 from .config import AppConfig
+from .cookies_io import StoredCookie, merge_stored_cookies, read_netscape
 
 logger = logging.getLogger(__name__)
 
@@ -61,37 +63,76 @@ class TorClient:
             http2=False,
         )
         logger.info(
-            "Tor client ready via %s; delay %.0f-%.0fs",
-            tor.proxy_url,
+            "Tor client ready via %s:%s; delay %.0f-%.0fs",
+            tor.socks_host,
+            tor.port,
             self.config.crawl.request_delay_min,
             self.config.crawl.request_delay_max,
         )
 
-    def _load_cookies(self) -> httpx.Cookies:
-        cookies = httpx.Cookies()
+    def _cookies_path(self) -> Path | None:
         raw_path = (self.config.crawl.cookies_file or "").strip()
         if not raw_path:
-            return cookies
-
+            return None
         path = Path(raw_path)
         if not path.is_absolute():
             path = self.config.project_root / path
+        return path
+
+    def _seed_hostname(self) -> str:
+        return (urlparse(self.config.seed_url).hostname or "").lower()
+
+    def _load_cookies(self) -> httpx.Cookies:
+        cookies = httpx.Cookies()
+        path = self._cookies_path()
+        if path is None:
+            return cookies
         if not path.exists():
             logger.warning("cookies_file not found: %s", path)
             return cookies
 
-        # Minimal Netscape cookies.txt reader.
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
+        now = int(time.time())
+        loaded = 0
+        for item in read_netscape(path):
+            if item.expires and item.expires <= now:
                 continue
-            parts = line.split("\t")
-            if len(parts) < 7:
-                continue
-            domain, _flag, cookie_path, _secure, _expires, name, value = parts[:7]
-            cookies.set(name, value, domain=domain.lstrip("."), path=cookie_path)
-        logger.info("Loaded cookies from %s", path)
+            cookies.set(item.name, item.value, domain=item.domain, path=item.path or "/")
+            loaded += 1
+        logger.info("Loaded %s cookies from %s", loaded, path)
         return cookies
+
+    def _persist_seed_cookies(self, url: str, response: httpx.Response) -> None:
+        path = self._cookies_path()
+        host = (urlparse(url).hostname or "").lower()
+        if path is None or not host or host != self._seed_hostname():
+            return
+        updates: list[StoredCookie] = []
+        for cookie in response.cookies.jar:
+            domain = (cookie.domain or host).lstrip(".").lower()
+            if domain != host and not host.endswith("." + domain):
+                continue
+            if not cookie.name:
+                continue
+            updates.append(
+                StoredCookie(
+                    domain=domain,
+                    path=cookie.path or "/",
+                    name=cookie.name,
+                    value=cookie.value or "",
+                    secure=bool(cookie.secure),
+                    expires=int(cookie.expires or 0),
+                )
+            )
+        changed = merge_stored_cookies(path, updates)
+        identity = [
+            name
+            for name in changed
+            if name.lower() in {"sid", "mybbuser", "pf_entry", "pf_verified"}
+        ]
+        if identity:
+            logger.info("Saved refreshed session cookies: %s", ", ".join(identity))
+        elif changed:
+            logger.debug("Saved refreshed cookies: %s", ", ".join(changed))
 
     async def close(self) -> None:
         if self._client is not None:
@@ -127,6 +168,7 @@ class TorClient:
                 await asyncio.sleep(wait_for)
             response = await self._client.get(url)
             self._last_request_at = loop.time()
+            self._persist_seed_cookies(url, response)
             return response
 
     async def check_exit_ip(self) -> str | None:

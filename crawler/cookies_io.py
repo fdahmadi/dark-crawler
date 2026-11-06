@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +18,8 @@ class StoredCookie:
     name: str
     value: str
     secure: bool = False
+    # Unix timestamp. 0 means a session cookie with no expiry.
+    expires: int = 0
 
 
 def default_cookie_path(project_root: Path) -> Path:
@@ -51,12 +55,13 @@ def write_netscape(path: Path, cookies: list[StoredCookie]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Netscape HTTP Cookie File",
-        "# Saved by Dark Crawler UI. Do not commit this file.",
+        "# Saved by Dark Crawler. Do not commit this file.",
     ]
     for cookie in cookies:
-        domain = cookie.domain.lstrip(".")
+        domain = cookie.domain.lstrip(".").lower()
         flag = "TRUE"
         secure = "TRUE" if cookie.secure else "FALSE"
+        expires = str(int(cookie.expires or 0))
         lines.append(
             "\t".join(
                 [
@@ -64,14 +69,64 @@ def write_netscape(path: Path, cookies: list[StoredCookie]) -> None:
                     flag,
                     cookie.path or "/",
                     secure,
-                    "0",
+                    expires,
                     cookie.name,
                     cookie.value,
                 ]
             )
         )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    path.chmod(0o600)
+    text = "\n".join(lines) + "\n"
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
+
+
+def read_netscape(path: Path) -> list[StoredCookie]:
+    if not path.exists():
+        return []
+    cookies: list[StoredCookie] = []
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "\t" not in line:
+            continue
+        item = _parse_netscape_line(line, "")
+        if item and item.name:
+            cookies.append(item)
+    return cookies
+
+
+def merge_stored_cookies(path: Path, updates: list[StoredCookie]) -> list[str]:
+    """Upsert cookies into the Netscape file. Returns names whose value changed."""
+    if not updates:
+        return []
+    index: dict[tuple[str, str, str], StoredCookie] = {}
+    for cookie in read_netscape(path):
+        index[_cookie_key(cookie)] = _normalize_cookie(cookie)
+    changed: list[str] = []
+    now = int(time.time())
+    for cookie in updates:
+        normalized = _normalize_cookie(cookie)
+        if not normalized.name:
+            continue
+        key = _cookie_key(normalized)
+        if normalized.expires and normalized.expires <= now:
+            if key in index:
+                del index[key]
+                changed.append(normalized.name)
+            continue
+        previous = index.get(key)
+        if (
+            previous is None
+            or previous.value != normalized.value
+            or previous.expires != normalized.expires
+            or previous.secure != normalized.secure
+        ):
+            index[key] = normalized
+            changed.append(normalized.name)
+    if changed:
+        write_netscape(path, list(index.values()))
+    return changed
 
 
 def cookie_names(path: Path) -> list[str]:
@@ -134,16 +189,36 @@ def _parse_netscape_line(line: str, default_domain: str) -> StoredCookie | None:
     parts = line.split("\t")
     if len(parts) < 7:
         return None
-    domain, _flag, path, secure, _expires, name, value = parts[:7]
+    domain, _flag, path, secure, expires_raw, name, value = parts[:7]
     if not name:
         return None
+    try:
+        expires = int(expires_raw)
+    except ValueError:
+        expires = 0
     return StoredCookie(
-        domain=(domain or default_domain).lstrip("."),
+        domain=(domain or default_domain).lstrip(".").lower(),
         path=path or "/",
         name=name,
         value=value,
         secure=secure.upper() == "TRUE",
+        expires=max(0, expires),
     )
+
+
+def _normalize_cookie(cookie: StoredCookie) -> StoredCookie:
+    return StoredCookie(
+        domain=cookie.domain.lstrip(".").lower(),
+        path=cookie.path or "/",
+        name=cookie.name,
+        value=cookie.value,
+        secure=cookie.secure,
+        expires=max(0, int(cookie.expires or 0)),
+    )
+
+
+def _cookie_key(cookie: StoredCookie) -> tuple[str, str, str]:
+    return (cookie.domain.lstrip(".").lower(), cookie.path or "/", cookie.name)
 
 
 def _parse_cookie_header(line: str, default_domain: str) -> list[StoredCookie]:

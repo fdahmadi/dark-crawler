@@ -3,8 +3,11 @@
 DataDirectory /var/lib/dark-crawler-tor
 PidFile /run/dark-crawler-tor/tor.pid
 
-# Bind localhost only — not exposed publicly
-SocksPort 127.0.0.1:19050
+# Bind localhost only — not exposed publicly.
+# IsolateSOCKSAuth groups streams by the crawler's fixed SOCKS login.
+SocksPort 127.0.0.1:19050 IsolateSOCKSAuth
+# Reuse one circuit for new streams for 24 hours. The default is 10 minutes.
+MaxCircuitDirtiness 86400
 ControlPort 127.0.0.1:19051
 CookieAuthentication 1
 CookieAuthFile /var/lib/dark-crawler-tor/control_auth_cookie

@@ -1,5 +1,8 @@
-# SOCKS for the host crawler (published only to 127.0.0.1 in compose)
-SocksPort 0.0.0.0:9050
+# SOCKS for the host crawler (published only to 127.0.0.1 in compose).
+# IsolateSOCKSAuth groups streams by the crawler's fixed SOCKS login.
+SocksPort 0.0.0.0:9050 IsolateSOCKSAuth
+# Reuse one circuit for new streams for 24 hours. The default is 10 minutes.
+MaxCircuitDirtiness 86400
 DataDirectory /var/lib/tor
 Log notice stdout
 RunAsDaemon 0
