@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Sites · Dark Crawler{% endblock %}
+{% block heading %}Sites{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Registered forums</h2>
+  <p class="muted">Each onion host gets its own hashed data folder. Enable several at once; the crawler shares Tor concurrency across them. Disable or delete without touching other sites.</p>
+  {% if flash %}
+  <p class="{% if flash_ok %}badge ok{% else %}badge bad{% endif %}" style="display:inline-block;">{{ flash }}</p>
+  {% endif %}
+  {% if error %}
+  <p class="badge bad" style="display:inline-block;">{{ error }}</p>
+  {% endif %}
+
+  {% if sites %}
+  <table>
+    <thead>
+      <tr>
+        <th>Host</th>
+        <th>Hash</th>
+        <th>Pages</th>
+        <th>State</th>
+        <th>Alert</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for site in sites %}
+      <tr>
+        <td>
+          <div class="mono">{{ site.short_host }}</div>
+          {% if site.label %}<div class="muted">{{ site.label }}</div>{% endif %}
+        </td>
+        <td class="mono">{{ site.id }}</td>
+        <td>{{ site.pages }}</td>
+        <td>
+          {% if site.enabled %}
+          <span class="badge ok">enabled</span>
+          {% else %}
+          <span class="badge idle">disabled</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if site.alert_kind %}
+          <span class="badge warn">{{ site.alert_kind }}</span>
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="actions">
+            <form method="post" action="/sites/select">
+              <input type="hidden" name="site_id" value="{{ site.id }}">
+              <button class="btn" type="submit">Open</button>
+            </form>
+            <form method="post" action="/sites/toggle">
+              <input type="hidden" name="site_id" value="{{ site.id }}">
+              <input type="hidden" name="enabled" value="{% if site.enabled %}0{% else %}1{% endif %}">
+              <button class="btn secondary" type="submit">{% if site.enabled %}Disable{% else %}Enable{% endif %}</button>
+            </form>
+            <form method="post" action="/sites/delete" onsubmit="return confirm('Delete this site and its data folder?');">
+              <input type="hidden" name="site_id" value="{{ site.id }}">
+              <button class="btn secondary" type="submit">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No sites yet. Add a seed URL below.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Add site</h2>
+  <form method="post" action="/sites/add">
+    <p class="field">
+      <span class="label">Seed URL</span>
+      <input name="seed_url" required placeholder="http://examplexxxxxxxx.onion/" style="width:100%;padding:0.55rem;border:1px solid var(--line);border-radius:4px;font-family:var(--mono);">
+    </p>
+    <p class="field">
+      <span class="label">Label (optional)</span>
+      <input name="label" placeholder="DarkFox" style="width:100%;padding:0.55rem;border:1px solid var(--line);border-radius:4px;">
+    </p>
+    <label style="display:flex;gap:0.5rem;align-items:center;margin:0.6rem 0;">
+      <input type="checkbox" name="enabled" value="1" checked>
+      Enable for crawling immediately
+    </label>
+    <button class="btn" type="submit">Add site</button>
+  </form>
+</section>
+{% endblock %}

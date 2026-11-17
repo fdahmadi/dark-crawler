@@ -1,5 +1,5 @@
-# Target forum (Tor hidden service)
-seed_url: "http://pwnfrm7rbf6kyerigxi677lcz5ifmoagdbqqknwdu2by27wfdst5qmqd.onion/"
+# Legacy seed used once to migrate into data/sites.json (Sites page is source of truth).
+seed_url: "http://darkfoxaqhfpxkrbt7vxns2z2u2k72sgmqbzeorupaiottw3ecm2wgyd.onion/"
 
 # Tor SOCKS5 proxy (Tor Browser: 9150, system tor: 9050)
 tor:

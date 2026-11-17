@@ -242,3 +242,45 @@ iframe.mirror-frame {
   border-radius: 6px;
   background: #fff;
 }
+
+.btn.secondary { background: #f3efe7; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.auth-steps {
+  display: grid;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+.auth-step {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  background: #fffcf7;
+}
+.auth-step.focus {
+  border-color: #d4a373;
+  box-shadow: inset 3px 0 0 #d4a373;
+}
+.auth-step h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+.session-frame-wrap {
+  margin-top: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1c1a16;
+}
+.session-frame {
+  width: 100%;
+  min-height: 70vh;
+  border: 0;
+  display: block;
+  background: #1c1a16;
+}
+
+.site-bar {
+  margin: -0.4rem 0 1rem;
+  font-size: 0.92rem;
+}

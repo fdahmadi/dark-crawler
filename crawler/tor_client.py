@@ -31,11 +31,18 @@ def check_tor_port(host: str, port: int, timeout: float = 2.0) -> bool:
 
 
 class TorClient:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        request_lock: asyncio.Lock | None = None,
+        last_request_at: list[float] | None = None,
+    ) -> None:
         self.config = config
         self._client: httpx.AsyncClient | None = None
-        self._lock = asyncio.Lock()
-        self._last_request_at = 0.0
+        # Shared lock/clock lets multi-site crawls keep one polite Tor pace.
+        self._lock = request_lock or asyncio.Lock()
+        self._last_request_at_box = last_request_at if last_request_at is not None else [0.0]
 
     async def __aenter__(self) -> "TorClient":
         await self.open()
@@ -140,11 +147,33 @@ class TorClient:
             self._client = None
 
     async def get(self, url: str) -> httpx.Response:
+        return await self.request("GET", url)
+
+    async def post(
+        self,
+        url: str,
+        *,
+        data: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        return await self.request("POST", url, data=data, headers=headers)
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        follow_redirects: bool = True,
+    ) -> httpx.Response:
         if self._client is None:
             raise RuntimeError("TorClient is not open")
 
         # Follow redirects one hop at a time so the delay applies to each request.
-        response = await self._send(url)
+        response = await self._send(method, url, data=data, headers=headers)
+        if not follow_redirects:
+            return response
         for _ in range(4):
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response
@@ -152,22 +181,38 @@ class TorClient:
             if not location:
                 return response
             url = urljoin(str(response.url), location)
-            response = await self._send(url)
+            # After a POST redirect, continue with GET and no body.
+            method = "GET"
+            data = None
+            headers = None
+            response = await self._send(method, url, data=data, headers=headers)
         return response
 
-    async def _send(self, url: str) -> httpx.Response:
+    async def _send(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
         if self._client is None:
             raise RuntimeError("TorClient is not open")
         delay = self.config.crawl.next_delay()
         async with self._lock:
             loop = asyncio.get_running_loop()
             now = loop.time()
-            wait_for = self._last_request_at + delay - now
+            wait_for = self._last_request_at_box[0] + delay - now
             if wait_for > 0:
                 logger.info("Waiting %.1fs before next request", wait_for)
                 await asyncio.sleep(wait_for)
-            response = await self._client.get(url)
-            self._last_request_at = loop.time()
+            response = await self._client.request(
+                method.upper(),
+                url,
+                data=data,
+                headers=headers,
+            )
+            self._last_request_at_box[0] = loop.time()
             self._persist_seed_cookies(url, response)
             return response
 

@@ -103,9 +103,34 @@ Token is stored in `/opt/dark-crawler/deploy/web.env` as `WEB_UI_TOKEN`.
 /var/log/dark-crawler/tor.log
 ```
 
-### Note: human verification walls
+### Sites (multi-forum)
 
-If the seed page returns a captcha / “Verify Humanity” challenge, the crawler will store that HTML but cannot discover forum links until you provide a valid session cookie via `crawl.cookies_file` in `config.yaml` (Netscape `cookies.txt` from a browser session you already completed).
+Manage crawl targets on **Sites** (no need to wipe data when adding another forum):
+
+```text
+http://SERVER_IP:19810/sites?token=YOUR_TOKEN
+```
+
+- Add / enable / disable / delete domains live while the crawler runs (registry reloads every few seconds).
+- Each host is stored under `data/sites/<sha256(host)[:12]>/` (`forum.db`, `mirror/`, `cookies.txt`, optional `secrets.yaml`).
+- Enabled sites share one Tor concurrency budget (fair round-robin). An auth wall pauses **that** site only.
+- First boot migrates legacy `seed_url` + `data/forum.db` into the registry automatically.
+
+### Auth recovery (captcha + login)
+
+Select a site, then open **Auth**:
+
+```text
+http://SERVER_IP:19810/auth?token=YOUR_TOKEN
+```
+
+Flow:
+
+1. **Captcha** — **Open captcha session** (Firefox behind Tor + noVNC). Solve it, then **Save session cookies** into that site’s folder.
+2. **Login** — enter username/password on the Auth page (saved under that site’s `data/sites/<hash>/secrets.yaml`), then press **Login**.
+3. Cookie paste on `/cookies` remains an advanced fallback.
+
+The interactive browser is reverse-proxied under `/auth/session/` and auto-stops after ~30 minutes idle. Keep `WEB_UI_TOKEN` secret.
 
 ---
 
@@ -267,14 +292,13 @@ Then open: http://127.0.0.1:8080/
 
 ## Config tips
 
-Edit `config.yaml` before crawling:
+Edit `config.yaml` for global Tor/crawl defaults; manage forums on the **Sites** page:
 
-- `seed_url` — target `.onion` forum
-- `crawl.max_pages` — `500` by default; `0` = unlimited
-- `crawl.request_delay` — keep polite on Tor (default `2.0`s)
-- `crawl.concurrency` — keep low (default `2`)
-- `storage.enable_mirror` — HTML mirror on/off
-- `crawl.cookies_file` — optional Netscape `cookies.txt` for a session you already own
+- `seed_url` — legacy migration seed only (imported into `data/sites.json` once)
+- `crawl.max_pages` — shared budget across enabled sites; `0` = unlimited
+- `crawl.concurrency` — shared Tor workers (keep low)
+- `storage.enable_mirror` — HTML mirror on/off (per-site folders)
+- Per-site cookies/secrets live under `data/sites/<hash>/`
 
 After editing `config.yaml`, restart crawler:
 

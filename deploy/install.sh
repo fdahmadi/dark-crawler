@@ -9,7 +9,9 @@ LOG_DIR="/var/log/dark-crawler"
 echo "==> Installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y --no-install-recommends tor python3-venv python3-pip ca-certificates curl
+apt-get install -y --no-install-recommends \
+  tor python3-venv python3-pip ca-certificates curl \
+  xvfb x11vnc novnc websockify firefox-esr dbus-x11 fonts-dejavu-core
 
 # IMPORTANT: never stop/disable the distro Tor on 9050 — other host services may use it.
 # This project uses a separate instance on 127.0.0.1:19050 only.
@@ -36,6 +38,9 @@ sudo -u darkcrawler "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.t
 echo "==> Server config"
 cp -f "$APP_DIR/deploy/config.server.yaml" "$APP_DIR/config.yaml"
 chown darkcrawler:darkcrawler "$APP_DIR/config.yaml"
+chmod 755 "$APP_DIR/deploy/browser-session.sh"
+
+# Per-site credentials are saved from the Auth page into data/sites/<hash>/secrets.yaml
 
 if [[ ! -f "$APP_DIR/deploy/web.env" ]]; then
   TOKEN="$(python3 - <<'PY'
@@ -51,7 +56,7 @@ EOF
   echo "Created web UI token in deploy/web.env"
 fi
 
-echo "==> sudoers for crawl start button"
+echo "==> sudoers for crawl / browser session buttons"
 cp -f "$APP_DIR/deploy/sudoers-darkcrawler" /etc/sudoers.d/darkcrawler
 chmod 440 /etc/sudoers.d/darkcrawler
 visudo -cf /etc/sudoers.d/darkcrawler
@@ -60,8 +65,11 @@ echo "==> systemd units"
 cp -f "$APP_DIR/deploy/dark-crawler-tor.service" /etc/systemd/system/
 cp -f "$APP_DIR/deploy/dark-crawler.service" /etc/systemd/system/
 cp -f "$APP_DIR/deploy/dark-crawler-web.service" /etc/systemd/system/
+cp -f "$APP_DIR/deploy/dark-crawler-browser.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable dark-crawler-tor.service dark-crawler.service dark-crawler-web.service
+# Browser unit is on-demand only (started from Web UI Auth page).
+systemctl disable dark-crawler-browser.service >/dev/null 2>&1 || true
 systemctl restart dark-crawler-tor.service
 systemctl restart dark-crawler-web.service
 
@@ -80,4 +88,8 @@ systemctl --no-pager --full status dark-crawler-web.service | sed -n '1,12p'
 ss -ltn | grep -E '19050|19051|19810' || true
 TOKEN_VALUE="$(grep '^WEB_UI_TOKEN=' "$APP_DIR/deploy/web.env" | cut -d= -f2-)"
 echo "Web UI: http://SERVER_IP:19810/?token=${TOKEN_VALUE}"
+echo "Sites: http://SERVER_IP:19810/sites?token=${TOKEN_VALUE}"
+echo "Auth:  http://SERVER_IP:19810/auth?token=${TOKEN_VALUE}"
+echo "WARNING: Auth opens an interactive browser behind the same token on a public port."
+echo "Per-forum data lives in data/sites/<hash>/ — no wipe needed when adding sites."
 echo "Done."

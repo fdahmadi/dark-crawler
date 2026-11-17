@@ -286,7 +286,8 @@ class Database:
             return None
         return int(row["status_code"])
 
-    async def set_alert(self, message: str) -> None:
+    async def set_alert(self, message: str, kind: str | None = None) -> None:
+        now = utc_now()
         await self.conn.execute(
             """
             INSERT INTO crawler_state(key, value, updated_at)
@@ -295,13 +296,37 @@ class Database:
                 value = excluded.value,
                 updated_at = excluded.updated_at
             """,
-            (message, utc_now()),
+            (message, now),
         )
+        if kind:
+            await self.conn.execute(
+                """
+                INSERT INTO crawler_state(key, value, updated_at)
+                VALUES ('alert_kind', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (kind, now),
+            )
+        else:
+            await self.conn.execute(
+                "DELETE FROM crawler_state WHERE key = 'alert_kind'"
+            )
         await self.conn.commit()
+
+    async def get_alert_kind(self) -> str | None:
+        async with self.conn.execute(
+            "SELECT value FROM crawler_state WHERE key = 'alert_kind' LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None or not row["value"]:
+            return None
+        return str(row["value"])
 
     async def clear_alert(self) -> None:
         await self.conn.execute(
-            "DELETE FROM crawler_state WHERE key = 'alert'"
+            "DELETE FROM crawler_state WHERE key IN ('alert', 'alert_kind')"
         )
         await self.conn.commit()
 

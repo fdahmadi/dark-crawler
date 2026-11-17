@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Auth · Dark Crawler{% endblock %}
+{% block heading %}Auth recovery{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Current block</h2>
+  {% if alert_kind %}
+  <p>
+    <span class="badge warn">{{ alert_kind }}</span>
+    {{ alert or 'The crawl is waiting for auth recovery.' }}
+  </p>
+  {% elif alert %}
+  <p><span class="badge warn">blocked</span> {{ alert }}</p>
+  {% else %}
+  <p class="muted">No auth alert right now. You can still refresh captcha or login if pages look wrong.</p>
+  {% endif %}
+
+  <div class="auth-steps">
+    <div class="auth-step {% if alert_kind == 'captcha' %}focus{% endif %}">
+      <h3>1. Captcha</h3>
+      <p class="muted">Open a Tor-backed browser on this server, solve the human check, then save cookies.</p>
+      <div class="actions">
+        {% if session.active %}
+        <span class="badge ok">session running</span>
+        {% else %}
+        <form method="post" action="/auth/session/start">
+          {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
+          <button class="btn" type="submit">Open captcha session</button>
+        </form>
+        {% endif %}
+        {% if session.active %}
+        <form method="post" action="/auth/session/save">
+          {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
+          <button class="btn" type="submit">Save session cookies</button>
+        </form>
+        <form method="post" action="/auth/session/stop">
+          {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
+          <button class="btn secondary" type="submit">Stop session</button>
+        </form>
+        {% endif %}
+      </div>
+      {% if session.active %}
+      <p class="muted">If the frame is blank, open
+        <a href="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify" target="_blank" rel="noopener">full session window</a>.
+      </p>
+      <div class="session-frame-wrap">
+        <iframe
+          class="session-frame"
+          title="Remote captcha browser"
+          src="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify"
+        ></iframe>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="auth-step {% if alert_kind == 'login' or alert_kind == 'forbidden_session' %}focus{% endif %}">
+      <h3>2. Credentials + Login</h3>
+      <p class="muted">
+        Saved per site at <span class="mono">{{ secrets.path }}</span>
+        {% if secrets.configured %}
+          · user <span class="mono">{{ secrets.username }}</span>
+          · source <span class="mono">{{ secrets.source }}</span>
+        {% else %}
+          · not set yet
+        {% endif %}
+      </p>
+      <form method="post" action="/auth/credentials" class="cred-form">
+        {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
+        <p class="field">
+          <span class="label">Username</span>
+          <input name="username" value="{{ secrets.username }}" required autocomplete="username" style="width:100%;padding:0.55rem;border:1px solid var(--line);border-radius:4px;">
+        </p>
+        <p class="field">
+          <span class="label">Password</span>
+          <input name="password" type="password" value="" {% if not secrets.configured %}required{% endif %} autocomplete="current-password" placeholder="{% if secrets.configured %}leave blank to keep current password{% else %}password{% endif %}" style="width:100%;padding:0.55rem;border:1px solid var(--line);border-radius:4px;">
+        </p>
+        <div class="actions">
+          <button class="btn secondary" type="submit">Save credentials</button>
+        </div>
+      </form>
+      <div class="actions" style="margin-top:0.75rem;">
+        <form method="post" action="/auth/login">
+          {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
+          <button class="btn" type="submit" {% if not secrets.configured %}disabled{% endif %}>Login</button>
+        </form>
+      </div>
+      <p class="muted">After captcha cookies exist, press Login. Password is never shown again after save.</p>
+    </div>
+  </div>
+
+  {% if flash %}
+  <p class="{% if flash_ok %}badge ok{% else %}badge bad{% endif %}" style="display:inline-block;margin-top:1rem;">{{ flash }}</p>
+  {% endif %}
+  {% if error %}
+  <p class="badge bad" style="display:inline-block;margin-top:1rem;">{{ error }}</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Advanced fallback</h2>
+  <p class="muted">Still works: paste a Cookie header from Tor Browser on the
+    <a href="/cookies">Cookies</a> page.</p>
+  <p class="muted mono">cookies: {{ cookie_path }} · names: {{ names|join(', ') if names else '(none)' }}</p>
+</section>
+{% endblock %}

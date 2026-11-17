@@ -22,6 +22,7 @@ rsync -az --delete \
   --exclude '__pycache__/' \
   --exclude '*.pyc' \
   --exclude 'config.yaml' \
+  --exclude 'secrets.yaml' \
   --exclude 'deploy/web.env' \
   -e "ssh -o BatchMode=yes" \
   ./ "${HOST}:${DEST}/"
@@ -39,12 +40,22 @@ if [[ ! -x "$APP_DIR/.venv/bin/python" ]] || [[ ! -f /etc/systemd/system/dark-cr
   exit 0
 fi
 
+echo "==> Browser / noVNC packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y --no-install-recommends \
+  xvfb x11vnc novnc websockify firefox-esr dbus-x11 fonts-dejavu-core >/dev/null
+
 echo "==> Permissions"
 chown -R darkcrawler:darkcrawler "$APP_DIR"
 chmod 755 /opt "$APP_DIR" "$APP_DIR/deploy"
 chmod 644 "$APP_DIR/deploy/torrc"
+chmod 755 "$APP_DIR/deploy/browser-session.sh"
 if [[ -f "$APP_DIR/deploy/web.env" ]]; then
   chmod 600 "$APP_DIR/deploy/web.env"
+fi
+if [[ -f "$APP_DIR/secrets.yaml" ]]; then
+  chown darkcrawler:darkcrawler "$APP_DIR/secrets.yaml"
+  chmod 600 "$APP_DIR/secrets.yaml"
 fi
 if [[ ! -f "$APP_DIR/config.yaml" ]]; then
   cp -f "$APP_DIR/deploy/config.server.yaml" "$APP_DIR/config.yaml"
@@ -61,8 +72,10 @@ visudo -cf /etc/sudoers.d/darkcrawler
 cp -f "$APP_DIR/deploy/dark-crawler-tor.service" /etc/systemd/system/
 cp -f "$APP_DIR/deploy/dark-crawler.service" /etc/systemd/system/
 cp -f "$APP_DIR/deploy/dark-crawler-web.service" /etc/systemd/system/
+cp -f "$APP_DIR/deploy/dark-crawler-browser.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable dark-crawler-tor.service dark-crawler.service dark-crawler-web.service
+systemctl disable dark-crawler-browser.service >/dev/null 2>&1 || true
 
 echo "==> Restarting Tor"
 systemctl restart dark-crawler-tor.service
@@ -82,5 +95,6 @@ systemctl --no-pager --full status dark-crawler-tor.service | sed -n '1,8p'
 systemctl --no-pager --full status dark-crawler-web.service | sed -n '1,8p'
 systemctl --no-pager --full status dark-crawler.service | sed -n '1,8p'
 echo "Web UI: http://104.194.142.112:19810/"
+echo "Auth:   http://104.194.142.112:19810/auth"
 echo "Done."
 EOF

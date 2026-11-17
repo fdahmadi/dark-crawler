@@ -1,5 +1,6 @@
 # Server deploy config — Tor SOCKS on non-default localhost port
-seed_url: "http://pwnfrm7rbf6kyerigxi677lcz5ifmoagdbqqknwdu2by27wfdst5qmqd.onion/"
+# Migrated into data/sites.json on first run; manage forums on the Sites page afterward.
+seed_url: "http://darkfoxaqhfpxkrbt7vxns2z2u2k72sgmqbzeorupaiottw3ecm2wgyd.onion/"
 
 tor:
   socks_host: "127.0.0.1"

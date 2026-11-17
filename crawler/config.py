@@ -133,6 +133,7 @@ class AppConfig:
     storage: StorageConfig
     logging: LoggingConfig
     project_root: Path
+    config_path: Path | None = None
 
     @property
     def seed_host(self) -> str:
@@ -159,6 +160,45 @@ class AppConfig:
             path = self.project_root / path
         return path
 
+    def with_site(
+        self,
+        *,
+        seed_url: str,
+        database: str | Path,
+        mirror_dir: str | Path,
+        cookies_file: str | Path,
+    ) -> "AppConfig":
+        """Return a shallow copy scoped to one site's paths."""
+        crawl = CrawlConfig(
+            max_pages=self.crawl.max_pages,
+            concurrency=self.crawl.concurrency,
+            request_delay=self.crawl.request_delay,
+            request_delay_min=self.crawl.request_delay_min,
+            request_delay_max=self.crawl.request_delay_max,
+            timeout=self.crawl.timeout,
+            same_host_only=self.crawl.same_host_only,
+            allowed_content_types=list(self.crawl.allowed_content_types),
+            skip_patterns=list(self.crawl.skip_patterns),
+            user_agent=self.crawl.user_agent,
+            cookies_file=str(cookies_file),
+            retry_403_seconds=self.crawl.retry_403_seconds,
+        )
+        storage = StorageConfig(
+            database=str(database),
+            mirror_dir=str(mirror_dir),
+            enable_mirror=self.storage.enable_mirror,
+            enable_structured_parse=self.storage.enable_structured_parse,
+        )
+        return AppConfig(
+            seed_url=seed_url,
+            tor=self.tor,
+            crawl=crawl,
+            storage=storage,
+            logging=self.logging,
+            project_root=self.project_root,
+            config_path=self.config_path,
+        )
+
 
 def _section(data: dict[str, Any], key: str) -> dict[str, Any]:
     value = data.get(key) or {}
@@ -172,9 +212,9 @@ def load_config(path: str | Path) -> AppConfig:
     with config_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
 
+    # Optional legacy seed used only to migrate into data/sites.json.
     seed_url = (raw.get("seed_url") or "").strip()
-    if not seed_url:
-        raise ValueError("seed_url is required in config.yaml")
+    seed_url = _env("SEED_URL", seed_url) or seed_url
 
     tor_raw = _section(raw, "tor")
     crawl_raw = _section(raw, "crawl")
@@ -197,7 +237,7 @@ def load_config(path: str | Path) -> AppConfig:
     delay_min, delay_max = _delay_bounds(crawl_raw)
 
     return AppConfig(
-        seed_url=_env("SEED_URL", seed_url) or seed_url,
+        seed_url=seed_url,
         tor=TorConfig(
             socks_host=socks_host,
             socks_port=socks_port,
@@ -253,4 +293,5 @@ def load_config(path: str | Path) -> AppConfig:
             file=str(logging_raw.get("file", "data/crawler.log")),
         ),
         project_root=config_path.parent,
+        config_path=config_path,
     )

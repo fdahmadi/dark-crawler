@@ -8,3 +8,6 @@ data/
 *.db
 *.log
 .DS_Store
+secrets.yaml
+deploy/secrets.yaml
+deploy/web.env

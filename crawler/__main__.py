@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .config import load_config
 from .db import Database
+from .sites import enabled_sites, load_registry, migrate_legacy_layout, site_paths
 from .spider import Spider
 from .tor_client import TorNotAvailableError, check_tor_port
 
@@ -37,6 +38,7 @@ def setup_logging(level: str, log_file: Path) -> None:
 async def cmd_crawl(config_path: Path) -> int:
     config = load_config(config_path)
     setup_logging(config.logging.level, config.log_path)
+    migrate_legacy_layout(config.project_root, config.seed_url)
 
     tor = config.tor
     if not check_tor_port(tor.socks_host, tor.port):
@@ -48,60 +50,81 @@ async def cmd_crawl(config_path: Path) -> int:
         )
         return 2
 
-    db = Database(config.database_path)
-    await db.connect()
+    if not enabled_sites(config.project_root):
+        print(
+            "No enabled sites. Open the Web UI Sites page and add/enable a forum.",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
-        spider = Spider(config, db)
+        spider = Spider(config)
         stats = await spider.run()
         print("Crawl finished.")
         for key, value in sorted(stats.items()):
             print(f"  {key}: {value}")
-        if config.storage.enable_mirror:
-            print(f"Mirror directory: {config.mirror_path}")
-        print(f"Database: {config.database_path}")
+        print(f"Sites registry: {config.project_root / 'data' / 'sites.json'}")
         return 0
     except TorNotAvailableError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    finally:
-        await db.close()
 
 
 async def cmd_stats(config_path: Path) -> int:
     config = load_config(config_path)
-    db = Database(config.database_path)
-    await db.connect()
-    try:
-        stats = await db.stats()
-        print(json.dumps(stats, indent=2, ensure_ascii=False))
-        return 0
-    finally:
-        await db.close()
+    migrate_legacy_layout(config.project_root, config.seed_url)
+    payload: dict[str, object] = {"sites": []}
+    for site in load_registry(config.project_root):
+        paths = site_paths(config.project_root, site.id)
+        entry: dict[str, object] = {
+            "id": site.id,
+            "host": site.host,
+            "enabled": site.enabled,
+            "seed_url": site.seed_url,
+            "stats": {},
+        }
+        if paths.database.exists():
+            db = Database(paths.database)
+            await db.connect()
+            try:
+                entry["stats"] = await db.stats()
+            finally:
+                await db.close()
+        payload["sites"].append(entry)
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return 0
 
 
 async def cmd_export(config_path: Path, out_dir: Path) -> int:
     config = load_config(config_path)
+    migrate_legacy_layout(config.project_root, config.seed_url)
     out_dir.mkdir(parents=True, exist_ok=True)
-    db = Database(config.database_path)
-    await db.connect()
-    try:
-        tables = ("pages", "forums", "threads", "posts", "users", "links")
-        for table in tables:
-            async with db.conn.execute(f"SELECT * FROM {table}") as cursor:
-                rows = await cursor.fetchall()
-                if not rows:
-                    continue
-                columns = [item[0] for item in cursor.description]
-            csv_path = out_dir / f"{table}.csv"
-            with csv_path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=columns)
-                writer.writeheader()
-                for row in rows:
-                    writer.writerow({col: row[col] for col in columns})
-            print(f"Wrote {csv_path} ({len(rows)} rows)")
-        return 0
-    finally:
-        await db.close()
+    for site in load_registry(config.project_root):
+        paths = site_paths(config.project_root, site.id)
+        if not paths.database.exists():
+            continue
+        site_out = out_dir / site.id
+        site_out.mkdir(parents=True, exist_ok=True)
+        db = Database(paths.database)
+        await db.connect()
+        try:
+            tables = ("pages", "forums", "threads", "posts", "users", "links")
+            for table in tables:
+                async with db.conn.execute(f"SELECT * FROM {table}") as cursor:
+                    rows = await cursor.fetchall()
+                    if not rows:
+                        continue
+                    columns = [item[0] for item in cursor.description]
+                csv_path = site_out / f"{table}.csv"
+                with csv_path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=columns)
+                    writer.writeheader()
+                    for row in rows:
+                        writer.writerow({col: row[col] for col in columns})
+                print(f"Wrote {csv_path} ({len(rows)} rows)")
+        finally:
+            await db.close()
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,8 +139,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("crawl", help="Start / resume crawling")
-    sub.add_parser("stats", help="Print database statistics")
+    sub.add_parser("crawl", help="Start / resume crawling enabled sites")
+    sub.add_parser("stats", help="Print per-site database statistics")
 
     export_parser = sub.add_parser("export", help="Export tables to CSV")
     export_parser.add_argument(
