@@ -17,11 +17,18 @@
 
   <div class="auth-steps">
     <div class="auth-step {% if alert_kind == 'captcha' %}focus{% endif %}">
-      <h3>1. Captcha</h3>
-      <p class="muted">Open a Tor-backed browser on this server, solve the human check, then save cookies.</p>
+      <h3>1. Captcha / browser session</h3>
+      <p class="muted">Opens a Tor browser for this site so cookies can be saved for the crawler.</p>
+      <ol class="howto">
+        <li>Press <strong>Open captcha session</strong> — a browser window opens through Tor.</li>
+        <li>If you see a captcha / “verify humanity” page, solve it. If the site has <em>no</em> captcha, just wait until the normal forum (or login) page loads.</li>
+        <li>You do <strong>not</strong> need to log in inside that browser unless you want to. Login can be done with the Login button in step 2.</li>
+        <li>Come back here and press <strong>Save session cookies</strong> — that is the important step.</li>
+        <li>Then press <strong>Stop session</strong> (or close the browser window).</li>
+      </ol>
       <div class="actions">
         {% if session.active %}
-        <span class="badge ok">session running</span>
+        <span class="badge ok session-status">session running</span>
         {% else %}
         <form method="post" action="/auth/session/start">
           {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
@@ -39,10 +46,12 @@
         </form>
         {% endif %}
       </div>
-      {% if session.active %}
-      <p class="muted">If the frame is blank, open
-        <a href="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify" target="_blank" rel="noopener">full session window</a>.
-      </p>
+      {% if session.active and session.headed %}
+      <p class="muted"><span class="badge ok">now</span> The Tor browser is open on your desktop. When the forum page is visible (captcha done or none), press <strong>Save session cookies</strong>, then Stop.</p>
+      {% elif session.active %}
+      <p class="muted"><span class="badge ok">now</span> Use the frame below (or
+        <a href="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify" target="_blank" rel="noopener">full window</a>).
+        When the forum page is visible, press <strong>Save session cookies</strong>, then Stop.</p>
       <div class="session-frame-wrap">
         <iframe
           class="session-frame"
@@ -84,8 +93,18 @@
           <button class="btn" type="submit" {% if not secrets.configured %}disabled{% endif %}>Login</button>
         </form>
       </div>
-      <p class="muted">After captcha cookies exist, press Login. Password is never shown again after save.</p>
+      <p class="muted">If the site needs a member login: Save credentials, then press Login. Password is never shown again after save.</p>
     </div>
+  </div>
+
+  <div class="auth-step" style="margin-top:1rem;">
+    <h3>3. Start crawling</h3>
+    <ol class="howto">
+      <li><strong>Site needs captcha + login:</strong> do steps 1 → Save cookies → step 2 Login. After a successful Login (or Save cookies), the crawler is restarted automatically when systemd is available.</li>
+      <li><strong>Site needs only captcha:</strong> step 1 → Save cookies (skip Login). Crawler restart is attempted after Save.</li>
+      <li><strong>Site is public (no captcha, no login):</strong> skip Auth. On <a href="/sites">Sites</a> keep the forum <em>enabled</em>, then open <a href="/{% if site_id %}?site={{ site_id }}{% endif %}">Status</a> and press <strong>Start crawl</strong>.</li>
+      <li>If restart did not happen (local/dev without systemd), run: <span class="mono">python -m crawler crawl</span></li>
+    </ol>
   </div>
 
   {% if flash %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}API · Dark Crawler{% endblock %}
+{% block heading %}API{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Endpoints</h2>
+  <p class="muted">Machine-readable status for scripts and monitoring. This page is only a readable preview.</p>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Path</th><th>Response</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="mono">GET</td>
+        <td class="mono">/healthz</td>
+        <td>Liveness check</td>
+      </tr>
+      <tr>
+        <td class="mono">GET</td>
+        <td class="mono">/api/stats</td>
+        <td>Crawl + sites + browser session snapshot (JSON)</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="actions">
+    <a class="btn" href="{{ raw_url }}">Open /api/stats</a>
+    <a class="btn secondary" href="/{% if site_id %}?site={{ site_id }}{% endif %}">Back to Status</a>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Current /api/stats payload</h2>
+  <p class="muted">Same JSON the endpoint returns right now{% if payload.site_id %} for site <span class="mono">{{ payload.site_id }}</span>{% endif %}.</p>
+  <pre class="json-view">{{ payload_json | safe }}</pre>
+</section>
+{% endblock %}

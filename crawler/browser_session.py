@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import sqlite3
 import subprocess
 import tempfile
@@ -12,13 +13,27 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .config import AppConfig
+from .config import AppConfig, load_config
 from .cookies_io import StoredCookie, merge_stored_cookies, write_netscape
 
 logger = logging.getLogger(__name__)
 
 BROWSER_UNIT = "dark-crawler-browser.service"
 DEFAULT_WS_PORT = 6080
+
+
+def _project_root() -> Path:
+    env = (os.environ.get("DARK_CRAWLER_ROOT") or "").strip()
+    if env:
+        return Path(env).resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+def _config_path() -> Path:
+    env = (os.environ.get("DARK_CRAWLER_CONFIG") or "").strip()
+    if env:
+        return Path(env).resolve()
+    return _project_root() / "config.yaml"
 
 
 def browser_target_path(project_root: Path) -> Path:
@@ -53,6 +68,61 @@ def browser_ws_port() -> int:
     return DEFAULT_WS_PORT
 
 
+def _pid_path(project_root: Path | None = None) -> Path:
+    root = project_root or _project_root()
+    return root / "data" / "browser-session.pid"
+
+
+def _mode_path(project_root: Path | None = None) -> Path:
+    root = project_root or _project_root()
+    return root / "data" / "browser-session.mode"
+
+
+def _script_path(project_root: Path | None = None) -> Path:
+    root = project_root or _project_root()
+    return root / "deploy" / "browser-session.sh"
+
+
+def _session_mode(project_root: Path | None = None) -> str:
+    path = _mode_path(project_root)
+    if path.exists():
+        return path.read_text(encoding="utf-8").strip() or "unknown"
+    if local_browser_active(project_root):
+        return "local"
+    return "systemd" if Path(f"/etc/systemd/system/{BROWSER_UNIT}").exists() else "none"
+
+
+def _read_pid(project_root: Path | None = None) -> int | None:
+    path = _pid_path(project_root)
+    if not path.exists():
+        return None
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip())
+    except ValueError:
+        return None
+    return pid
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def local_browser_active(project_root: Path | None = None) -> bool:
+    pid = _read_pid(project_root)
+    if pid is None:
+        return False
+    if _pid_alive(pid):
+        return True
+    _pid_path(project_root).unlink(missing_ok=True)
+    return False
+
+
 def browser_unit_active() -> bool:
     try:
         result = subprocess.run(
@@ -62,9 +132,11 @@ def browser_unit_active() -> bool:
             text=True,
             timeout=3,
         )
-        return result.stdout.strip() == "active"
+        if result.stdout.strip() == "active":
+            return True
     except (OSError, subprocess.SubprocessError):
-        return False
+        pass
+    return local_browser_active()
 
 
 def _systemctl(action: str) -> bool:
@@ -85,22 +157,306 @@ def _systemctl(action: str) -> bool:
             )
             if result.returncode == 0:
                 return True
-            logger.warning(
+            logger.debug(
                 "systemctl %s %s failed: %s",
                 action,
                 BROWSER_UNIT,
                 (result.stderr or result.stdout or "").strip(),
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            logger.warning("systemctl %s error: %s", action, exc)
+            logger.debug("systemctl %s error: %s", action, exc)
     return False
+
+
+def _missing_local_deps() -> list[str]:
+    needed = {
+        "Xvfb": "xvfb",
+        "x11vnc": "x11vnc",
+        "websockify": "websockify",
+    }
+    missing: list[str] = []
+    for binary, package in needed.items():
+        if shutil.which(binary) is None:
+            missing.append(package)
+    if not Path("/usr/share/novnc/vnc.html").exists():
+        missing.append("novnc")
+    has_browser = any(
+        shutil.which(name)
+        for name in ("firefox-esr", "firefox", "chromium", "chromium-browser")
+    )
+    if not has_browser:
+        missing.append("firefox-esr")
+    # Dedupe while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in missing:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def _local_env(project_root: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    config_path = _config_path()
+    env["DARK_CRAWLER_ROOT"] = str(project_root)
+    env["DARK_CRAWLER_CONFIG"] = str(config_path)
+    env.setdefault("BROWSER_WS_PORT", str(browser_ws_port()))
+    env.setdefault("BROWSER_VNC_PORT", "5901")
+    env.setdefault("BROWSER_DISPLAY", "99")
+    env.setdefault("BROWSER_IDLE_SECONDS", "1800")
+    try:
+        config = load_config(config_path)
+        env["TOR_SOCKS_HOST"] = config.tor.socks_host
+        env["TOR_SOCKS_PORT"] = str(config.tor.port)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not load config for browser SOCKS defaults: %s", exc)
+        env.setdefault("TOR_SOCKS_HOST", "127.0.0.1")
+        env.setdefault("TOR_SOCKS_PORT", "9050")
+    # Prefer apt firefox-esr over snap when both exist.
+    esr = shutil.which("firefox-esr")
+    if esr:
+        env["BROWSER_FIREFOX_BIN"] = esr
+    return env
+
+
+def _detect_display() -> str | None:
+    for candidate in (
+        (os.environ.get("DISPLAY") or "").strip(),
+        ":0",
+        ":1",
+    ):
+        if not candidate:
+            continue
+        # X11 socket names drop the leading colon: :0 -> /tmp/.X11-unix/X0
+        name = candidate.split(".")[0]
+        if name.startswith(":"):
+            sock = Path("/tmp/.X11-unix") / f"X{name[1:]}"
+            if sock.exists():
+                return candidate
+    return None
+
+
+def _firefox_bin() -> str | None:
+    # Prefer apt browsers; snap firefox often cannot use custom profile dirs.
+    for name in (
+        "firefox-esr",
+        "google-chrome",
+        "chromium",
+        "chromium-browser",
+        "firefox",
+    ):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def _read_browser_target(project_root: Path) -> tuple[str, str]:
+    import json
+
+    path = browser_target_path(project_root)
+    if not path.exists():
+        return "", ""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "", ""
+    return str(raw.get("seed_url") or "").strip(), str(raw.get("site_id") or "").strip()
+
+
+def _write_firefox_user_js(profile: Path, *, socks_host: str, socks_port: int, seed_url: str) -> None:
+    profile.mkdir(parents=True, exist_ok=True)
+    (profile / "user.js").write_text(
+        "\n".join(
+            [
+                'user_pref("network.proxy.type", 1);',
+                f'user_pref("network.proxy.socks", "{socks_host}");',
+                f'user_pref("network.proxy.socks_port", {int(socks_port)});',
+                'user_pref("network.proxy.socks_remote_dns", true);',
+                'user_pref("network.proxy.socks_version", 5);',
+                'user_pref("browser.shell.checkDefaultBrowser", false);',
+                'user_pref("datareporting.policy.dataSubmissionEnabled", false);',
+                'user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);',
+                f'user_pref("browser.startup.homepage", "{seed_url}");',
+                'user_pref("startup.homepage_welcome_url", "");',
+                'user_pref("startup.homepage_welcome_url.additional", "");',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _start_headed_desktop_browser(project_root: Path) -> tuple[bool, str]:
+    display = _detect_display()
+    firefox = _firefox_bin()
+    if not display:
+        return False, "No local X11 display found for headed browser mode."
+    if not firefox:
+        return False, "No Firefox/Chromium binary found."
+
+    seed_url, site_id = _read_browser_target(project_root)
+    if not seed_url:
+        return False, "No browser target. Open Auth for a site first."
+
+    env = _local_env(project_root)
+    env["DISPLAY"] = display
+    socks_host = env.get("TOR_SOCKS_HOST", "127.0.0.1")
+    socks_port = int(env.get("TOR_SOCKS_PORT", "9050"))
+    profile = browser_profile_dir(project_root, site_id=site_id or None)
+    _write_firefox_user_js(
+        profile,
+        socks_host=socks_host,
+        socks_port=socks_port,
+        seed_url=seed_url,
+    )
+
+    log_path = project_root / "data" / "browser-session.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd: list[str]
+    if Path(firefox).name.startswith("firefox"):
+        cmd = [firefox, "--profile", str(profile), "--no-remote", "--new-instance", seed_url]
+    else:
+        cmd = [
+            firefox,
+            f"--user-data-dir={profile}",
+            f"--proxy-server=socks5://{socks_host}:{socks_port}",
+            "--no-first-run",
+            "--disable-gpu",
+            seed_url,
+        ]
+
+    with log_path.open("ab") as log_handle:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(project_root),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _pid_path(project_root).write_text(str(proc.pid), encoding="utf-8")
+    _mode_path(project_root).write_text("headed", encoding="utf-8")
+    time.sleep(1.0)
+    if proc.poll() is not None:
+        detail = log_path.read_text(encoding="utf-8", errors="ignore")[-400:]
+        _pid_path(project_root).unlink(missing_ok=True)
+        _mode_path(project_root).unlink(missing_ok=True)
+        return (
+            False,
+            "Desktop browser exited early (snap Firefox often fails with custom profiles). "
+            + (detail.strip() or f"See {log_path}"),
+        )
+    return (
+        True,
+        "Opened Firefox on your desktop through Tor. Solve captcha/login there, then Save session cookies.",
+    )
+
+
+def _start_novnc_browser(project_root: Path) -> tuple[bool, str]:
+    script = _script_path(project_root)
+    if not script.exists():
+        return False, f"Browser script not found: {script}"
+
+    log_path = project_root / "data" / "browser-session.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = _local_env(project_root)
+    with log_path.open("ab") as log_handle:
+        proc = subprocess.Popen(
+            ["bash", str(script)],
+            cwd=str(project_root),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    _pid_path(project_root).write_text(str(proc.pid), encoding="utf-8")
+    _mode_path(project_root).write_text("novnc", encoding="utf-8")
+
+    for _ in range(30):
+        if proc.poll() is not None:
+            detail = ""
+            if log_path.exists():
+                detail = log_path.read_text(encoding="utf-8", errors="ignore")[-500:]
+            _pid_path(project_root).unlink(missing_ok=True)
+            _mode_path(project_root).unlink(missing_ok=True)
+            return (
+                False,
+                "Local browser session exited early. "
+                + (detail.strip() or f"See {log_path}"),
+            )
+        if _ws_port_open():
+            return True, "Browser session started (local noVNC)."
+        time.sleep(0.5)
+
+    if _pid_alive(proc.pid):
+        return True, "Browser session started (noVNC still warming up)."
+    _pid_path(project_root).unlink(missing_ok=True)
+    _mode_path(project_root).unlink(missing_ok=True)
+    return False, f"Local browser session failed to open noVNC. See {log_path}"
+
+
+def _start_local_browser(project_root: Path) -> tuple[bool, str]:
+    if local_browser_active(project_root):
+        return True, "Browser session already running."
+
+    missing = _missing_local_deps()
+    if not missing:
+        return _start_novnc_browser(project_root)
+
+    # Desktop fallback: open Firefox on the local display (no root packages needed).
+    ok, message = _start_headed_desktop_browser(project_root)
+    if ok:
+        return ok, message
+
+    return (
+        False,
+        message
+        + " Or install noVNC stack with: sudo apt install "
+        + " ".join(missing),
+    )
+
+
+def _stop_local_browser(project_root: Path) -> tuple[bool, str]:
+    pid = _read_pid(project_root)
+    if pid is None:
+        return True, "Browser session is not running."
+    if not _pid_alive(pid):
+        _pid_path(project_root).unlink(missing_ok=True)
+        return True, "Browser session is not running."
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    for _ in range(20):
+        if not _pid_alive(pid):
+            break
+        time.sleep(0.25)
+    if _pid_alive(pid):
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    _pid_path(project_root).unlink(missing_ok=True)
+    _mode_path(project_root).unlink(missing_ok=True)
+    return True, "Browser session stopped."
 
 
 def start_browser_session() -> tuple[bool, str]:
     if browser_unit_active():
         return True, "Browser session already running."
-    if _systemctl("start"):
-        # Give Xvfb/Firefox a moment to come up.
+
+    # Prefer systemd when the unit exists (VPS).
+    unit_exists = Path(f"/etc/systemd/system/{BROWSER_UNIT}").exists()
+    if unit_exists and _systemctl("start"):
         for _ in range(20):
             if browser_unit_active() and _ws_port_open():
                 return True, "Browser session started."
@@ -108,19 +464,21 @@ def start_browser_session() -> tuple[bool, str]:
         if browser_unit_active():
             return True, "Browser session started (noVNC still warming up)."
         return False, "Browser unit started but did not stay active. Check journalctl."
-    return (
-        False,
-        "Could not start dark-crawler-browser.service. "
-        "Install browser deps and allow sudoers for this unit.",
-    )
+
+    # Local / no-systemd fallback.
+    return _start_local_browser(_project_root())
 
 
 def stop_browser_session() -> tuple[bool, str]:
+    root = _project_root()
+    if local_browser_active(root):
+        return _stop_local_browser(root)
     if not browser_unit_active():
         return True, "Browser session is not running."
     if _systemctl("stop"):
         return True, "Browser session stopped."
-    return False, "Could not stop dark-crawler-browser.service."
+    # Last resort: try local stop anyway.
+    return _stop_local_browser(root)
 
 
 def _ws_port_open() -> bool:
@@ -135,11 +493,16 @@ def _ws_port_open() -> bool:
 
 
 def session_status() -> dict[str, object]:
+    root = _project_root()
+    local = local_browser_active(root)
+    mode = _session_mode(root)
     return {
         "active": browser_unit_active(),
-        "ws_ready": _ws_port_open(),
+        "ws_ready": _ws_port_open() if mode != "headed" else False,
         "ws_port": browser_ws_port(),
-        "unit": BROWSER_UNIT,
+        "unit": "local-process" if local else BROWSER_UNIT,
+        "mode": mode,
+        "headed": mode == "headed",
     }
 
 
@@ -225,7 +588,6 @@ def _read_firefox_cookies(profile: Path, host: str) -> list[StoredCookie]:
 
 
 def _read_chromium_cookies(profile: Path, host: str) -> list[StoredCookie]:
-    # Chromium encrypts cookie values on Linux; only attempt plaintext/dev builds.
     candidates = [
         profile / "Default" / "Cookies",
         profile / "Cookies",
@@ -258,12 +620,10 @@ def _read_chromium_cookies(profile: Path, host: str) -> list[StoredCookie]:
             continue
         value = str(row[5] or "")
         if not value:
-            # Encrypted value — skip; Firefox path is preferred.
             continue
         name = str(row[4] or "")
         if not name:
             continue
-        # Chromium expires_utc is microseconds since 1601; treat unknown as session.
         out.append(
             StoredCookie(
                 domain=domain or host,
@@ -282,7 +642,6 @@ def _copy_db(src: Path) -> Path:
     os.close(fd)
     dest = Path(name)
     shutil.copy2(src, dest)
-    # Also copy WAL/SHM if present so the snapshot is consistent.
     for suffix in ("-wal", "-shm"):
         side = Path(str(src) + suffix)
         if side.exists():

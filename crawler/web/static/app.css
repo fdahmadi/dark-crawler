@@ -134,17 +134,37 @@ h1 {
 }
 
 .badge {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.12rem 0.5rem;
   border-radius: 999px;
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
+  line-height: 1;
+  height: auto;
+  min-height: 0;
+  box-sizing: border-box;
+  vertical-align: middle;
 }
 
 .badge.ok { background: #dff3e6; color: var(--ok); }
 .badge.idle { background: #eee9df; color: var(--muted); }
 .badge.warn { background: #f7e4cf; color: var(--warn); }
 .badge.bad { background: #f6dede; color: var(--bad); }
+
+/* Keep status chips compact and vertically centered next to action buttons. */
+.actions > .badge {
+  align-self: center;
+  flex: 0 0 auto;
+  padding: 0.2rem 0.55rem;
+  line-height: 1;
+}
+.actions > form {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+}
 
 table {
   width: 100%;
@@ -223,7 +243,21 @@ td.clip {
 .crumb { margin-bottom: 0.8rem; color: var(--muted); font-family: var(--mono); font-size: 0.82rem; }
 .crumb a { color: var(--muted); }
 
-.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+.actions a.btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.actions .session-status {
+  align-self: center;
+}
 .btn {
   border: 1px solid var(--line);
   background: #fff;
@@ -265,6 +299,14 @@ iframe.mirror-frame {
   margin: 0 0 0.4rem;
   font-size: 1rem;
 }
+.howto {
+  margin: 0.5rem 0 0.85rem 1.1rem;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.howto li { margin: 0.25rem 0; }
+.howto strong { color: var(--ink); font-weight: 600; }
 .session-frame-wrap {
   margin-top: 0.75rem;
   border: 1px solid var(--line);
@@ -283,4 +325,19 @@ iframe.mirror-frame {
 .site-bar {
   margin: -0.4rem 0 1rem;
   font-size: 0.92rem;
+}
+
+.json-view {
+  margin: 0.75rem 0 0;
+  padding: 0.9rem 1rem;
+  max-height: 70vh;
+  overflow: auto;
+  background: #1c1a16;
+  color: #e8e2d6;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre;
 }

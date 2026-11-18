@@ -667,8 +667,7 @@ def create_app() -> FastAPI:
             {"active": "pages", "pages": pages, "q": q},
         )
 
-    @app.get("/api/stats")
-    def api_stats(request: Request, site: str = Query(default="")) -> dict[str, Any]:
+    def _stats_payload(request: Request, site: str = "") -> dict[str, Any]:
         _root, database_path, mirror_path, current = get_paths(request, site)
         payload: dict[str, Any] = {
             "crawler_active": unit_active("dark-crawler.service"),
@@ -681,6 +680,9 @@ def create_app() -> FastAPI:
                 for item in load_registry(_project_root())
             ],
             "stats": {},
+            "captcha_hint": False,
+            "alert": "",
+            "alert_kind": "",
         }
         if current and database_path.exists():
             conn = db_connect(database_path)
@@ -693,6 +695,26 @@ def create_app() -> FastAPI:
                 conn.close()
         payload["browser_session"] = session_status()
         return payload
+
+    @app.get("/api", response_class=HTMLResponse)
+    def api_page(request: Request, site: str = Query(default="")) -> HTMLResponse:
+        import json
+
+        payload = _stats_payload(request, site)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "api.html",
+            {
+                "active": "api",
+                "payload": payload,
+                "payload_json": json.dumps(payload, indent=2, ensure_ascii=False),
+                "raw_url": _with_site("/api/stats", str(payload.get("site_id") or "")),
+            },
+        )
+
+    @app.get("/api/stats")
+    def api_stats(request: Request, site: str = Query(default="")) -> dict[str, Any]:
+        return _stats_payload(request, site)
 
     def _safe_mirror_target(request: Request, rel: str) -> Path:
         _root, _db, mirror_path, current = get_paths(request)

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=4">
 </head>
 <body>
   <div class="wrap">
@@ -24,7 +24,7 @@
         <a href="/auth{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'auth' %}active{% endif %}">Auth</a>
         <a href="/cookies{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'cookies' %}active{% endif %}">Cookies</a>
         <a href="/mirror/{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'mirror' %}active{% endif %}">Mirror</a>
-        <a href="/api/stats">API</a>
+        <a href="/api{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'api' %}active{% endif %}">API</a>
       </nav>
     </header>
     {% if current_site %}

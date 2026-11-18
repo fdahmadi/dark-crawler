@@ -84,13 +84,16 @@ if [[ -z "$NOVNC_WEB" ]]; then
   exit 1
 fi
 
-FIREFOX_BIN=""
-for candidate in firefox firefox-esr chromium chromium-browser google-chrome; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    FIREFOX_BIN="$(command -v "$candidate")"
-    break
-  fi
-done
+FIREFOX_BIN="${BROWSER_FIREFOX_BIN:-}"
+if [[ -z "$FIREFOX_BIN" ]]; then
+  # Prefer apt firefox-esr over snap firefox (snap confinement breaks custom profiles).
+  for candidate in firefox-esr firefox chromium chromium-browser google-chrome; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      FIREFOX_BIN="$(command -v "$candidate")"
+      break
+    fi
+  done
+fi
 if [[ -z "$FIREFOX_BIN" ]]; then
   echo "No Firefox/Chromium binary found" >&2
   exit 1
