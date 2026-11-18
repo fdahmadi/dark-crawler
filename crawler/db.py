@@ -276,6 +276,30 @@ class Database:
         await self.conn.commit()
         return cursor.rowcount
 
+    async def get_page_html(self, url: str) -> str | None:
+        async with self.conn.execute(
+            "SELECT html FROM pages WHERE url = ? LIMIT 1",
+            (url,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None or not row["html"]:
+            return None
+        return str(row["html"])
+
+    async def list_page_htmls(self, limit: int = 500) -> list[tuple[str, str]]:
+        async with self.conn.execute(
+            """
+            SELECT url, html FROM pages
+            WHERE html IS NOT NULL AND html != ''
+              AND status_code IS NOT NULL AND status_code < 400
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [(str(row["url"]), str(row["html"])) for row in rows]
+
     async def page_status(self, url_hash: str) -> int | None:
         async with self.conn.execute(
             "SELECT status_code FROM pages WHERE url_hash = ? LIMIT 1",

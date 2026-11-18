@@ -116,6 +116,8 @@ class StorageConfig:
     database: str = "data/forum.db"
     mirror_dir: str = "data/mirror"
     enable_mirror: bool = True
+    # Fetch CSS/images/fonts for the HTML mirror in a side queue (not page queue).
+    enable_mirror_assets: bool = True
     enable_structured_parse: bool = True
 
 
@@ -187,6 +189,7 @@ class AppConfig:
             database=str(database),
             mirror_dir=str(mirror_dir),
             enable_mirror=self.storage.enable_mirror,
+            enable_mirror_assets=self.storage.enable_mirror_assets,
             enable_structured_parse=self.storage.enable_structured_parse,
         )
         return AppConfig(
@@ -283,6 +286,9 @@ def load_config(path: str | Path) -> AppConfig:
             database=str(storage_raw.get("database", "data/forum.db")),
             mirror_dir=str(storage_raw.get("mirror_dir", "data/mirror")),
             enable_mirror=bool(storage_raw.get("enable_mirror", True)),
+            enable_mirror_assets=bool(
+                storage_raw.get("enable_mirror_assets", True)
+            ),
             enable_structured_parse=bool(
                 storage_raw.get("enable_structured_parse", True)
             ),

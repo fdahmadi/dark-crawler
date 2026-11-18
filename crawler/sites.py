@@ -238,78 +238,234 @@ def resolve_site(
     return sites[0]
 
 
+def infer_host_from_database(database: Path) -> str | None:
+    """Return the most common page host in a forum.db, if any."""
+    if not database.exists():
+        return None
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(str(database))
+        try:
+            rows = conn.execute(
+                "SELECT url FROM pages WHERE url IS NOT NULL AND url != '' LIMIT 200"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+    counts: dict[str, int] = {}
+    for (url,) in rows:
+        try:
+            host = host_from_seed(str(url))
+        except ValueError:
+            continue
+        counts[host] = counts.get(host, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
+def _move_or_copy(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        return
+    try:
+        shutil.move(str(src), str(dest))
+    except OSError:
+        if src.is_dir():
+            shutil.copytree(src, dest, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dest)
+
+
+def _ensure_site_record(
+    sites: list[SiteRecord],
+    *,
+    host: str,
+    seed_url: str,
+    enabled: bool = True,
+) -> tuple[list[SiteRecord], SiteRecord]:
+    site_id = host_hash(host)
+    for existing in sites:
+        if existing.id == site_id or existing.host == host:
+            return sites, existing
+    record = SiteRecord(
+        id=site_id,
+        seed_url=normalize_seed_url(seed_url),
+        host=host,
+        enabled=enabled,
+        label="",
+        created_at=utc_now(),
+    )
+    sites = [*sites, record]
+    return sites, record
+
+
+def _relocate_crawl_artifacts(
+    project_root: Path,
+    *,
+    from_id: str,
+    to_id: str,
+    expected_host: str,
+) -> None:
+    """Move DB + matching mirror host folder; leave auth profile/cookies in place."""
+    if from_id == to_id:
+        return
+    src = site_paths(project_root, from_id)
+    dest = site_paths(project_root, to_id)
+    dest.ensure()
+
+    if src.database.exists() and not dest.database.exists():
+        _move_or_copy(src.database, dest.database)
+        for suffix in ("-wal", "-shm"):
+            side = Path(str(src.database) + suffix)
+            if side.exists():
+                _move_or_copy(side, Path(str(dest.database) + suffix))
+        logger.info(
+            "Moved mismatched database from %s to %s (host %s)",
+            from_id,
+            to_id,
+            expected_host,
+        )
+
+    mirror_host = src.mirror / expected_host
+    if mirror_host.exists():
+        target = dest.mirror / expected_host
+        if not target.exists():
+            _move_or_copy(mirror_host, target)
+            logger.info("Moved mirror host folder %s -> %s", mirror_host, target)
+
+
+def repair_mismatched_site_data(project_root: Path) -> list[SiteRecord]:
+    """If a site folder holds another host's crawl DB, move it to the right id."""
+    sites = load_registry(project_root)
+    if not sites:
+        return sites
+    changed = False
+    for site in list(sites):
+        paths = site_paths(project_root, site.id)
+        inferred = infer_host_from_database(paths.database)
+        if not inferred or inferred == site.host:
+            continue
+        correct_id = host_hash(inferred)
+        if correct_id == site.id:
+            continue
+        seed = f"http://{inferred}/"
+        sites, _record = _ensure_site_record(
+            sites,
+            host=inferred,
+            seed_url=seed,
+            enabled=False,
+        )
+        _relocate_crawl_artifacts(
+            project_root,
+            from_id=site.id,
+            to_id=correct_id,
+            expected_host=inferred,
+        )
+        changed = True
+        logger.warning(
+            "Repaired site data: crawl for %s was under %s (%s); moved to %s",
+            inferred,
+            site.host,
+            site.id,
+            correct_id,
+        )
+    if changed:
+        save_registry(project_root, sites)
+    return sites
+
+
 def migrate_legacy_layout(project_root: Path, seed_url: str | None) -> list[SiteRecord]:
     """Create registry from config seed_url and move legacy data/forum.db if needed."""
     existing = load_registry(project_root)
     if existing:
-        return existing
+        return repair_mismatched_site_data(project_root)
 
     seed = (seed_url or "").strip()
-    if not seed:
-        save_registry(project_root, [])
-        return []
-
-    try:
-        seed = normalize_seed_url(seed)
-        host = host_from_seed(seed)
-    except ValueError:
-        save_registry(project_root, [])
-        return []
-
-    site_id = host_hash(host)
-    record = SiteRecord(
-        id=site_id,
-        seed_url=seed,
-        host=host,
-        enabled=True,
-        label="",
-        created_at=utc_now(),
-    )
-    paths = site_paths(project_root, site_id)
-    paths.ensure()
-
     legacy_db = project_root / "data" / "forum.db"
     legacy_mirror = project_root / "data" / "mirror"
     legacy_cookies = project_root / "data" / "cookies.txt"
 
-    if legacy_db.exists() and not paths.database.exists():
+    config_host: str | None = None
+    config_seed = ""
+    if seed:
         try:
-            shutil.move(str(legacy_db), str(paths.database))
-        except OSError:
-            shutil.copy2(legacy_db, paths.database)
-        logger.info("Migrated legacy database to %s", paths.database)
+            config_seed = normalize_seed_url(seed)
+            config_host = host_from_seed(config_seed)
+        except ValueError:
+            config_host = None
+
+    data_host = infer_host_from_database(legacy_db) if legacy_db.exists() else None
+    if data_host is None and legacy_mirror.exists() and legacy_mirror.is_dir():
+        for child in legacy_mirror.iterdir():
+            if child.is_dir() and "." in child.name:
+                data_host = child.name.lower()
+                break
+
+    sites: list[SiteRecord] = []
+    if not config_host and not data_host:
+        save_registry(project_root, [])
+        return []
+
+    # Attach legacy crawl artifacts to the host they actually belong to.
+    artifact_host = data_host or config_host
+    assert artifact_host is not None
+    artifact_seed = (
+        f"http://{artifact_host}/"
+        if data_host and data_host != config_host
+        else (config_seed or f"http://{artifact_host}/")
+    )
+    sites, artifact_site = _ensure_site_record(
+        sites,
+        host=artifact_host,
+        seed_url=artifact_seed,
+        enabled=True,
+    )
+    artifact_paths = site_paths(project_root, artifact_site.id)
+    artifact_paths.ensure()
+
+    if legacy_db.exists() and not artifact_paths.database.exists():
+        _move_or_copy(legacy_db, artifact_paths.database)
+        logger.info("Migrated legacy database to %s", artifact_paths.database)
     if legacy_mirror.exists() and legacy_mirror.is_dir():
-        if not any(paths.mirror.iterdir()):
-            for child in list(legacy_mirror.iterdir()):
-                dest = paths.mirror / child.name
-                if dest.exists():
-                    continue
-                try:
-                    shutil.move(str(child), str(dest))
-                except OSError:
-                    try:
-                        if child.is_dir():
-                            shutil.copytree(child, dest, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(child, dest)
-                    except OSError as exc:
-                        logger.warning("Could not migrate mirror entry %s: %s", child, exc)
+        for child in list(legacy_mirror.iterdir()):
+            dest = artifact_paths.mirror / child.name
+            if dest.exists():
+                continue
             try:
+                _move_or_copy(child, dest)
+            except OSError as exc:
+                logger.warning("Could not migrate mirror entry %s: %s", child, exc)
+        try:
+            if legacy_mirror.exists() and not any(legacy_mirror.iterdir()):
                 legacy_mirror.rmdir()
-            except OSError:
-                pass
-            logger.info("Migrated legacy mirror into %s", paths.mirror)
+        except OSError:
+            pass
+        logger.info("Migrated legacy mirror into %s", artifact_paths.mirror)
     if legacy_cookies.exists() and (
-        not paths.cookies.exists() or paths.cookies.stat().st_size < 64
+        not artifact_paths.cookies.exists() or artifact_paths.cookies.stat().st_size < 64
     ):
         try:
-            shutil.copy2(legacy_cookies, paths.cookies)
-            logger.info("Migrated legacy cookies to %s", paths.cookies)
+            shutil.copy2(legacy_cookies, artifact_paths.cookies)
+            logger.info("Migrated legacy cookies to %s", artifact_paths.cookies)
         except OSError as exc:
             logger.warning("Could not migrate cookies: %s", exc)
 
-    save_registry(project_root, [record])
-    return [record]
+    # Keep config seed as its own site even when legacy data belonged elsewhere.
+    if config_host and config_host != artifact_host:
+        sites, config_site = _ensure_site_record(
+            sites,
+            host=config_host,
+            seed_url=config_seed,
+            enabled=True,
+        )
+        site_paths(project_root, config_site.id).ensure()
+
+    save_registry(project_root, sites)
+    return sites
 
 
 def site_summary(project_root: Path, site: SiteRecord) -> dict[str, Any]:

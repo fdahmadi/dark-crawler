@@ -41,6 +41,7 @@ class SiteRuntime:
     pause_reason: str = ""
     forbidden_streak: int = 0
     known_urls: set[str] = field(default_factory=set)
+    queued_assets: set[str] = field(default_factory=set)
 
     @property
     def site_id(self) -> str:
@@ -71,6 +72,10 @@ class Spider:
         self._request_lock = asyncio.Lock()
         self._last_request_at = [0.0]
         self._rr_lock = asyncio.Lock()
+        self._asset_queue: asyncio.Queue[tuple[SiteRuntime, str] | None] = (
+            asyncio.Queue()
+        )
+        self._assets_saved = 0
 
     async def run(self) -> dict[str, int]:
         migrate_legacy_layout(self.config.project_root, self.config.seed_url)
@@ -85,15 +90,32 @@ class Spider:
         first = next(iter(self._sites.values()))
         await first.client.check_exit_ip()
 
+        # Queue missing CSS/images for pages already in the DB (side channel).
+        if self.config.storage.enable_mirror_assets:
+            for runtime in list(self._sites.values()):
+                await self._seed_missing_mirror_assets(runtime)
+
         workers = [
             asyncio.create_task(self._worker(i))
             for i in range(self.config.crawl.concurrency)
         ]
+        asset_workers = 1 if self.config.storage.enable_mirror_assets else 0
+        assets = [
+            asyncio.create_task(self._asset_worker(i))
+            for i in range(asset_workers)
+        ]
         refresher = asyncio.create_task(self._registry_refresher())
         try:
             await asyncio.gather(*workers)
+            # Drain mirror assets that were queued while pages were crawling.
+            if assets:
+                await self._asset_queue.join()
         finally:
             self._stop.set()
+            for _ in assets:
+                await self._asset_queue.put(None)
+            if assets:
+                await asyncio.gather(*assets, return_exceptions=True)
             refresher.cancel()
             try:
                 await refresher
@@ -101,7 +123,9 @@ class Spider:
                 pass
             await self._close_all_sites()
 
-        return await self._aggregate_stats()
+        stats = await self._aggregate_stats()
+        stats["mirror_assets"] = self._assets_saved
+        return stats
 
     async def _registry_refresher(self) -> None:
         while not self._stop.is_set():
@@ -360,6 +384,8 @@ class Spider:
         previous_status = await runtime.db.page_status(digest)
         if previous_status is not None and previous_status < 400:
             logger.debug("[%s] Already fetched: %s", runtime.site_id, url)
+            # Backfill missing mirror CSS/images without re-fetching the page.
+            await self._backfill_mirror_assets(runtime, url)
             return True
 
         if not await self._increment_fetched():
@@ -480,8 +506,11 @@ class Spider:
 
         mirror_path = None
         if runtime.mirror is not None and response.status_code < 400:
-            mirror_path = runtime.mirror.save(url, html, runtime.known_urls)
+            mirror_path, assets = runtime.mirror.save(
+                url, html, runtime.known_urls
+            )
             runtime.known_urls.add(url)
+            await self._queue_mirror_assets(runtime, assets)
 
         await runtime.db.save_page(
             url=url,
@@ -564,6 +593,112 @@ class Spider:
             if not self.should_visit(runtime, link):
                 continue
             await runtime.db.enqueue(link, depth=depth + 1)
+
+    async def _backfill_mirror_assets(
+        self,
+        runtime: SiteRuntime,
+        url: str,
+    ) -> None:
+        if (
+            not self.config.storage.enable_mirror_assets
+            or runtime.mirror is None
+        ):
+            return
+        html = await runtime.db.get_page_html(url)
+        if not html:
+            return
+        assets = runtime.mirror.extract_page_assets(url, html)
+        await self._queue_mirror_assets(runtime, assets)
+
+    async def _seed_missing_mirror_assets(self, runtime: SiteRuntime) -> None:
+        if runtime.mirror is None:
+            return
+        pages = await runtime.db.list_page_htmls(limit=200)
+        queued = 0
+        for url, html in pages:
+            assets = runtime.mirror.extract_page_assets(url, html)
+            before = len(runtime.queued_assets)
+            await self._queue_mirror_assets(runtime, assets)
+            queued += max(0, len(runtime.queued_assets) - before)
+        if queued:
+            logger.info(
+                "[%s] Queued %s missing mirror assets from saved pages",
+                runtime.site_id,
+                queued,
+            )
+
+    async def _queue_mirror_assets(
+        self,
+        runtime: SiteRuntime,
+        assets: list[str],
+    ) -> None:
+        if (
+            not self.config.storage.enable_mirror_assets
+            or runtime.mirror is None
+            or not assets
+        ):
+            return
+        for asset_url in assets:
+            if asset_url in runtime.queued_assets:
+                continue
+            if runtime.mirror.asset_exists(asset_url):
+                runtime.queued_assets.add(asset_url)
+                continue
+            runtime.queued_assets.add(asset_url)
+            await self._asset_queue.put((runtime, asset_url))
+
+    async def _asset_worker(self, worker_id: int) -> None:
+        while True:
+            item = await self._asset_queue.get()
+            try:
+                if item is None:
+                    return
+                runtime, asset_url = item
+                # Still fetch assets if the page crawl is paused (e.g. login wall).
+                if runtime.mirror is None:
+                    continue
+                if runtime.mirror.asset_exists(asset_url):
+                    continue
+                logger.info("[%s asset] GET %s", runtime.site_id, asset_url)
+                try:
+                    response = await runtime.client.get(asset_url)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[%s asset] failed %s: %s",
+                        runtime.site_id,
+                        asset_url,
+                        exc,
+                    )
+                    continue
+                if response.status_code >= 400:
+                    logger.warning(
+                        "[%s asset] HTTP %s for %s",
+                        runtime.site_id,
+                        response.status_code,
+                        asset_url,
+                    )
+                    continue
+                data = response.content
+                if not data:
+                    continue
+                runtime.mirror.save_asset(asset_url, data)
+                self._assets_saved += 1
+                content_type = response.headers.get("content-type", "")
+                if "css" in content_type or asset_url.lower().endswith(".css"):
+                    try:
+                        nested = runtime.mirror.extract_css_assets(
+                            asset_url,
+                            data.decode("utf-8", errors="ignore"),
+                        )
+                        await self._queue_mirror_assets(runtime, nested)
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "[%s asset] could not parse css urls from %s",
+                            runtime.site_id,
+                            asset_url,
+                        )
+            finally:
+                self._asset_queue.task_done()
 
 
 def _has_member_cookie(path: Path) -> bool:

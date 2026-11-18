@@ -2,6 +2,8 @@
 {% block title %}API · Dark Crawler{% endblock %}
 {% block heading %}API{% endblock %}
 {% block content %}
+{% include "_site_pick.html" %}
+
 <section class="panel">
   <h2>Endpoints</h2>
   <p class="muted">Machine-readable status for scripts and monitoring. This page is only a readable preview.</p>
@@ -22,15 +24,19 @@
       </tr>
     </tbody>
   </table>
+  {% if site_chosen %}
   <div class="actions">
     <a class="btn" href="{{ raw_url }}">Open /api/stats</a>
-    <a class="btn secondary" href="/{% if site_id %}?site={{ site_id }}{% endif %}">Back to Status</a>
+    <a class="btn secondary" href="/?site={{ site_id }}">Back to Status</a>
   </div>
+  {% endif %}
 </section>
 
+{% if site_chosen %}
 <section class="panel">
   <h2>Current /api/stats payload</h2>
-  <p class="muted">Same JSON the endpoint returns right now{% if payload.site_id %} for site <span class="mono">{{ payload.site_id }}</span>{% endif %}.</p>
+  <p class="muted">Same JSON the endpoint returns right now for site <span class="mono">{{ payload.site_id }}</span>.</p>
   <pre class="json-view">{{ payload_json | safe }}</pre>
 </section>
+{% endif %}
 {% endblock %}

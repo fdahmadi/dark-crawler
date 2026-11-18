@@ -2,9 +2,12 @@
 {% block title %}Mirror · Dark Crawler{% endblock %}
 {% block heading %}HTML mirror{% endblock %}
 {% block content %}
+{% include "_site_pick.html" %}
+
+{% if site_chosen %}
 <section class="panel">
   <div class="crumb">
-    <a href="/mirror/">mirror</a>
+    <a href="/mirror/?site={{ site_id }}">mirror</a>
     {% for part in crumbs %}
       / {% if part.href %}<a href="{{ part.href }}">{{ part.name }}</a>{% else %}{{ part.name }}{% endif %}
     {% endfor %}
@@ -13,9 +16,9 @@
   {% if is_file %}
     <p class="muted mono">{{ rel_path }}</p>
     <div class="actions">
-      <a class="btn" href="/mirror-raw/{{ rel_path }}" target="_blank">Open raw</a>
+      <a class="btn" href="/mirror-raw/{{ rel_path }}?site={{ site_id }}" target="_blank">Open raw</a>
     </div>
-    <iframe class="mirror-frame" src="/mirror-raw/{{ rel_path }}" title="Mirrored page"></iframe>
+    <iframe class="mirror-frame" src="/mirror-raw/{{ rel_path }}?site={{ site_id }}" title="Mirrored page"></iframe>
   {% else %}
     {% if entries %}
     <ul class="file-list">
@@ -31,4 +34,5 @@
     {% endif %}
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}

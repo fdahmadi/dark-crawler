@@ -12,10 +12,10 @@ crawl:
   # Max pages to fetch in one run (0 = unlimited)
   max_pages: 500
   # Concurrent requests (keep low on Tor)
-  concurrency: 2
+  concurrency: 3
   # Random pause between every HTTP request, including redirects
-  request_delay_min: 20
-  request_delay_max: 40
+  request_delay_min: 3
+  request_delay_max: 8
   # HTTP timeout for onion sites (seconds)
   timeout: 60
   # Follow only links under the same onion host
@@ -39,6 +39,8 @@ storage:
   mirror_dir: "data/mirror"
   # Save raw HTML mirror with rewritten local links
   enable_mirror: true
+  # Fetch CSS/images/fonts in a side queue (not the page crawl queue)
+  enable_mirror_assets: true
   # Also extract structured forum entities when possible
   enable_structured_parse: true
 

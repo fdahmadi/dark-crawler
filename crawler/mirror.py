@@ -9,6 +9,13 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
+from .parser import normalize_url
+
+CSS_URL_RE = re.compile(
+    r"""url\(\s*(['"]?)([^)'"]+)\1\s*\)""",
+    re.IGNORECASE,
+)
+
 
 class MirrorWriter:
     def __init__(self, root: Path, seed_host: str) -> None:
@@ -35,13 +42,84 @@ class MirrorWriter:
         relative = Path(host) / path.lstrip("/")
         return self.root / relative
 
-    def save(self, url: str, html: str, known_urls: set[str] | None = None) -> str:
+    def asset_exists(self, url: str) -> bool:
+        path = self.url_to_path(url)
+        return path.exists() and path.is_file() and path.stat().st_size > 0
+
+    def save_asset(self, url: str, data: bytes) -> str:
+        target = self.url_to_path(url)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return str(target.relative_to(self.root))
+
+    def extract_page_assets(self, page_url: str, html: str) -> list[str]:
+        """Same-host CSS/image/font/script URLs referenced by a page (not <a> links)."""
+        soup = BeautifulSoup(html, "lxml")
+        found: list[str] = []
+        seen: set[str] = set()
+
+        def add(raw: str | None) -> None:
+            absolute = normalize_url(page_url, raw)
+            if not absolute or absolute in seen:
+                return
+            parsed = urlparse(absolute)
+            if parsed.netloc.lower() != self.seed_host:
+                return
+            seen.add(absolute)
+            found.append(absolute)
+
+        for tag in soup.find_all("link"):
+            rel = " ".join(tag.get("rel") or []).lower()
+            href = tag.get("href")
+            if not href:
+                continue
+            if any(
+                key in rel
+                for key in ("stylesheet", "icon", "preload", "prefetch", "apple-touch-icon")
+            ):
+                add(href)
+            elif (tag.get("as") or "").lower() in {"style", "image", "font", "script"}:
+                add(href)
+
+        for tag in soup.find_all(["img", "script", "source", "video", "audio", "embed"]):
+            add(tag.get("src"))
+            if tag.name == "img":
+                srcset = tag.get("srcset")
+                if srcset:
+                    for part in srcset.split(","):
+                        candidate = part.strip().split(" ", 1)[0]
+                        add(candidate)
+            if tag.name == "video":
+                add(tag.get("poster"))
+
+        return found
+
+    def extract_css_assets(self, css_url: str, css_text: str) -> list[str]:
+        """Fonts/images referenced inside a stylesheet."""
+        found: list[str] = []
+        seen: set[str] = set()
+        for match in CSS_URL_RE.finditer(css_text):
+            raw = (match.group(2) or "").strip()
+            if not raw or raw.startswith("data:"):
+                continue
+            absolute = normalize_url(css_url, raw)
+            if not absolute or absolute in seen:
+                continue
+            parsed = urlparse(absolute)
+            if parsed.netloc.lower() != self.seed_host:
+                continue
+            seen.add(absolute)
+            found.append(absolute)
+        return found
+
+    def save(self, url: str, html: str, known_urls: set[str] | None = None) -> tuple[str, list[str]]:
         target = self.url_to_path(url)
         target.parent.mkdir(parents=True, exist_ok=True)
 
+        assets = self.extract_page_assets(url, html)
         rewritten = self._rewrite_links(url, html, known_urls or set())
         target.write_text(rewritten, encoding="utf-8")
-        return str(target.relative_to(self.root))
+        return str(target.relative_to(self.root)), assets
 
     def _rewrite_links(
         self, page_url: str, html: str, known_urls: set[str]
@@ -54,8 +132,6 @@ class MirrorWriter:
             value = tag.get(attr)
             if not value:
                 continue
-
-            from .parser import normalize_url
 
             absolute = normalize_url(page_url, value)
             if not absolute:

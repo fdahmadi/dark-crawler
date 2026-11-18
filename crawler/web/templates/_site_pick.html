@@ -1,0 +1,26 @@
+<section class="panel">
+  <h2>1. Choose site</h2>
+  <p class="muted">{{ pick_hint }}</p>
+  {% if pick_sites %}
+  <form method="post" action="/sites/select" class="auth-site-pick">
+    <input type="hidden" name="next" value="{{ pick_next }}">
+    <label class="field">
+      <span class="label">Site / domain</span>
+      <select name="site_id" required>
+        <option value="" disabled {% if not site_chosen %}selected{% endif %}>Select a site…</option>
+        {% for site in pick_sites %}
+        <option value="{{ site.id }}" {% if site_id == site.id %}selected{% endif %}>
+          {{ site.short_host }}{% if site.label %} — {{ site.label }}{% endif %}{% if not site.enabled %} (disabled){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="actions">
+      <button class="btn" type="submit">{% if site_chosen %}Switch site{% else %}Continue{% endif %}</button>
+      <a class="btn secondary" href="/sites">Manage sites</a>
+    </div>
+  </form>
+  {% else %}
+  <p class="muted">No sites yet. <a href="/sites">Add a site</a> first.</p>
+  {% endif %}
+</section>

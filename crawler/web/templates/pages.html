@@ -2,8 +2,12 @@
 {% block title %}Pages · Dark Crawler{% endblock %}
 {% block heading %}Crawled pages{% endblock %}
 {% block content %}
+{% include "_site_pick.html" %}
+
+{% if site_chosen %}
 <section class="panel">
   <form method="get" action="/pages" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+    <input type="hidden" name="site" value="{{ site_id }}">
     <input name="q" value="{{ q }}" placeholder="Search title / URL" style="flex:1;min-width:220px;padding:0.45rem 0.6rem;border:1px solid var(--line);border-radius:4px;font:inherit;">
     <button class="btn" type="submit">Search</button>
   </form>
@@ -21,7 +25,7 @@
         <td class="url">{{ page.url }}</td>
         <td>
           {% if page.mirror_path %}
-          <a href="/mirror/{{ page.mirror_path }}">open</a>
+          <a href="/mirror/{{ page.mirror_path }}?site={{ site_id }}">open</a>
           {% endif %}
         </td>
       </tr>
@@ -32,4 +36,5 @@
   <p class="empty">No matching pages.</p>
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}

@@ -2,8 +2,19 @@
 {% block title %}Status · Dark Crawler{% endblock %}
 {% block heading %}Crawl status{% endblock %}
 {% block content %}
+{% set pick_sites = status_sites %}
+{% set pick_next = "/" %}
+{% set pick_hint = "Status, queue, and recent pages are per domain. Pick a site to inspect." %}
+{% include "_site_pick.html" %}
+
 <section class="panel">
   <h2>Service</h2>
+  {% if flash %}
+  <p><span class="{% if flash_ok %}badge ok{% else %}badge bad{% endif %}">{{ flash }}</span></p>
+  {% endif %}
+  {% if error %}
+  <p><span class="badge bad">{{ error }}</span></p>
+  {% endif %}
   <p>
     Crawler:
     {% if crawler_active %}
@@ -18,25 +29,31 @@
       <span class="badge bad">down</span>
     {% endif %}
   </p>
-  {% if seed_url %}
-  <p class="muted mono">seed: {{ seed_url }}</p>
-  <p class="muted mono">db: {{ database_path }}</p>
-  {% else %}
-  <p class="muted">No site selected yet. <a href="/sites">Add a site</a> to start.</p>
-  {% endif %}
-  {% if alert_kind == 'captcha' or captcha_hint %}
-  <p><span class="badge warn">captcha</span> Human-verification wall detected. <a href="/auth">Solve captcha on Auth</a>.</p>
-  {% elif alert_kind == 'login' %}
-  <p><span class="badge warn">login</span> Login required. <a href="/auth">Open Auth and press Login</a>.</p>
-  {% elif alert_kind == 'forbidden_session' %}
-  <p><span class="badge warn">session</span> Session looks expired. <a href="/auth">Refresh captcha/login on Auth</a>.</p>
-  {% endif %}
+  <p class="muted">Start / Stop applies to all enabled sites (shared crawl process).</p>
   <div class="actions">
     <form method="post" action="/actions/start-crawl" onsubmit="return confirm('Start / restart crawl for all enabled sites?');">
       {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
       <button class="btn" type="submit">Start crawl</button>
     </form>
+    <form method="post" action="/actions/stop-crawl" onsubmit="return confirm('Stop the crawler now?');">
+      {% if site_id %}<input type="hidden" name="site" value="{{ site_id }}">{% endif %}
+      <button class="btn secondary" type="submit" {% if not crawler_active %}disabled{% endif %}>Stop crawl</button>
+    </form>
   </div>
+</section>
+
+{% if site_chosen %}
+<section class="panel">
+  <h2>Site detail</h2>
+  <p class="muted mono">seed: {{ seed_url }}</p>
+  <p class="muted mono">db: {{ database_path }}</p>
+  {% if alert_kind == 'captcha' or captcha_hint %}
+  <p><span class="badge warn">captcha</span> Human-verification wall detected. <a href="/auth?site={{ site_id }}">Solve captcha on Auth</a>.</p>
+  {% elif alert_kind == 'login' %}
+  <p><span class="badge warn">login</span> Login required. <a href="/auth?site={{ site_id }}">Open Auth and press Login</a>.</p>
+  {% elif alert_kind == 'forbidden_session' %}
+  <p><span class="badge warn">session</span> Session looks expired. <a href="/auth?site={{ site_id }}">Refresh captcha/login on Auth</a>.</p>
+  {% endif %}
 </section>
 
 <section class="grid">
@@ -82,7 +99,7 @@
         <td class="url">{{ page.url }}</td>
         <td>
           {% if page.mirror_path %}
-          <a href="/mirror/{{ page.mirror_path }}">mirror</a>
+          <a href="/mirror/{{ page.mirror_path }}?site={{ site_id }}">mirror</a>
           {% endif %}
         </td>
       </tr>
@@ -93,4 +110,5 @@
   <p class="empty">No pages crawled yet.</p>
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}

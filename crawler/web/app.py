@@ -28,6 +28,8 @@ from crawler.browser_session import (
     write_browser_target,
 )
 from crawler.config import AppConfig, load_config
+from crawler.crawl_control import crawler_active, start_crawler, stop_crawler
+from crawler.tor_client import check_tor_port
 from crawler.cookies_io import (
     cookie_names,
     domain_from_seed,
@@ -149,12 +151,13 @@ def _template_context(request: Request) -> dict[str, Any]:
         root = _project_root()
         _ensure_registry()
         sites = load_registry(root)
-        site_id = (
-            request.query_params.get("site")
-            or request.cookies.get("ui_site")
-            or ""
-        ).strip()
-        current = resolve_site(root, site_id or None)
+        query_site = (request.query_params.get("site") or "").strip()
+        path = request.url.path
+        if _needs_explicit_site(path):
+            site_id = query_site
+        else:
+            site_id = (query_site or request.cookies.get("ui_site") or "").strip()
+        current = resolve_site(root, site_id) if site_id else None
         alert = ""
         alert_kind = ""
         if current is not None:
@@ -255,14 +258,13 @@ def _ensure_registry() -> AppConfig:
 def _site_from_request(
     request: Request,
     site: str | None = None,
+    *,
+    cookie_fallback: bool = True,
 ) -> SiteRecord | None:
     _ensure_registry()
-    site_id = (
-        (site or "").strip()
-        or request.query_params.get("site")
-        or request.cookies.get("ui_site")
-        or ""
-    ).strip()
+    site_id = ((site or "").strip() or request.query_params.get("site") or "").strip()
+    if not site_id and cookie_fallback:
+        site_id = (request.cookies.get("ui_site") or "").strip()
     return resolve_site(_project_root(), site_id or None)
 
 
@@ -284,6 +286,8 @@ def _scoped_config(site: SiteRecord) -> tuple[AppConfig, "SitePaths"]:
 def get_paths(
     request: Request | None = None,
     site: str | None = None,
+    *,
+    cookie_fallback: bool = True,
 ) -> tuple[Path, Path, Path, SiteRecord | None]:
     config = _ensure_registry()
     current = None
@@ -291,7 +295,9 @@ def get_paths(
         if request is None:
             current = resolve_site(config.project_root, site)
         else:
-            current = _site_from_request(request, site)
+            current = _site_from_request(
+                request, site, cookie_fallback=cookie_fallback
+            )
     else:
         current = resolve_site(config.project_root, None)
     if current is None:
@@ -299,6 +305,42 @@ def get_paths(
     paths = site_paths(config.project_root, current.id)
     paths.ensure()
     return config.project_root, paths.database, paths.mirror, current
+
+
+def _needs_explicit_site(path: str) -> bool:
+    if path in {"/", "/auth", "/pages", "/db", "/cookies", "/api", "/mirror", "/mirror/"}:
+        return True
+    return path.startswith("/mirror/")
+
+
+def _site_pick_vars(
+    sites: list[SiteRecord],
+    current: SiteRecord | None,
+    *,
+    next_path: str,
+    hint: str,
+) -> dict[str, Any]:
+    return {
+        "pick_sites": sites,
+        "pick_next": next_path,
+        "pick_hint": hint,
+        "site_chosen": current is not None,
+        "site_id": current.id if current else "",
+        "current_site": current,
+    }
+
+
+def _safe_next_path(raw: str) -> str:
+    dest = (raw or "/").strip() or "/"
+    if "://" in dest or not dest.startswith("/") or dest.startswith("//"):
+        return "/"
+    path = dest.split("?", 1)[0]
+    if path.rstrip("/") == "/mirror":
+        path = "/mirror/"
+    allowed = {"/", "/pages", "/db", "/cookies", "/api", "/auth", "/mirror/"}
+    if path in allowed or path.startswith("/mirror/"):
+        return path
+    return "/"
 
 
 def _with_site(url: str, site_id: str) -> str:
@@ -344,27 +386,19 @@ def unit_active(unit: str) -> bool:
         return False
 
 
+def tor_reachable() -> bool:
+    if unit_active("dark-crawler-tor.service") or unit_active("tor.service"):
+        return True
+    try:
+        config = _ensure_registry()
+        return check_tor_port(config.tor.socks_host, config.tor.port)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def start_crawler_unit(action: str = "start") -> bool:
-    if action not in {"start", "restart"}:
-        action = "start"
-    commands = [
-        ["sudo", "-n", "systemctl", action, "dark-crawler.service"],
-        ["systemctl", action, "dark-crawler.service"],
-    ]
-    for cmd in commands:
-        try:
-            result = subprocess.run(
-                cmd,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if result.returncode == 0:
-                return True
-        except (OSError, subprocess.SubprocessError):
-            continue
-    return False
+    ok, _message = start_crawler(action, _project_root())
+    return ok
 
 
 def fetch_stats(conn: sqlite3.Connection) -> dict[str, int]:
@@ -489,24 +523,39 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/", response_class=HTMLResponse)
-    def status_page(request: Request) -> HTMLResponse:
-        root, database_path, _mirror, site = get_paths(request)
+    def status_page(
+        request: Request,
+        site: str = Query(default=""),
+    ) -> HTMLResponse:
+        root = _project_root()
+        _ensure_registry()
+        sites = load_registry(root)
+        explicit = (site or "").strip()
+        current = resolve_site(root, explicit) if explicit else None
+        if explicit and current is None:
+            return RedirectResponse(
+                url=f"/?error={quote('Unknown site')}",
+                status_code=303,
+            )
+
+        stats: dict[str, int] = {}
+        queue_rows: list[Any] = []
+        recent_pages: list[Any] = []
+        captcha_hint = False
         alert_kind = ""
-        if database_path.exists():
-            conn = db_connect(database_path)
-            try:
-                stats = fetch_stats(conn)
-                queue_rows = fetch_queue(conn)
-                recent_pages = fetch_recent_pages(conn)
-                captcha_hint = looks_like_captcha(conn)
-            finally:
-                conn.close()
-            alert_kind = read_alert_kind(database_path)
-        else:
-            stats = {}
-            queue_rows = []
-            recent_pages = []
-            captcha_hint = False
+        database_path = Path("/nonexistent")
+        if current is not None:
+            _root, database_path, _mirror, _site = get_paths(request, current.id)
+            if database_path.exists():
+                conn = db_connect(database_path)
+                try:
+                    stats = fetch_stats(conn)
+                    queue_rows = fetch_queue(conn)
+                    recent_pages = fetch_recent_pages(conn)
+                    captcha_hint = looks_like_captcha(conn)
+                finally:
+                    conn.close()
+                alert_kind = read_alert_kind(database_path)
 
         preferred = [
             "pages",
@@ -526,21 +575,33 @@ def create_app() -> FastAPI:
             if key not in preferred:
                 cards.append((key, value))
 
+        flash = (request.query_params.get("flash") or "").strip()
+        flash_ok = (request.query_params.get("ok") or "") == "1"
+        error = (request.query_params.get("error") or "").strip()
+
         return TEMPLATES.TemplateResponse(
             request,
             "status.html",
             {
                 "active": "status",
-                "seed_url": site.seed_url if site else "",
-                "database_path": str(database_path) if site else "",
+                "status_sites": sites,
+                "site_chosen": current is not None,
+                "site_id": current.id if current else "",
+                "current_site": current,
+                "seed_url": current.seed_url if current else "",
+                "database_path": str(database_path) if current else "",
                 "stats_cards": cards,
                 "queue_rows": queue_rows,
                 "recent_pages": recent_pages,
-                "crawler_active": unit_active("dark-crawler.service"),
-                "tor_active": unit_active("dark-crawler-tor.service"),
+                "crawler_active": crawler_active(root),
+                "tor_active": tor_reachable(),
                 "captcha_hint": captcha_hint,
+                "alert": read_alert(database_path) if current else "",
                 "alert_kind": alert_kind,
                 "root": str(root),
+                "flash": flash,
+                "flash_ok": flash_ok,
+                "error": error,
             },
         )
 
@@ -622,14 +683,21 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/sites/select")
-    def sites_select(site_id: str = Form(default="")) -> RedirectResponse:
+    def sites_select(
+        site_id: str = Form(default=""),
+        next_path: str = Form(default="/", alias="next"),
+    ) -> RedirectResponse:
         site = resolve_site(_project_root(), site_id)
         if site is None:
             return RedirectResponse(
                 url=f"/sites?error={quote('Unknown site')}",
                 status_code=303,
             )
-        response = RedirectResponse(url=f"/?site={quote(site.id)}", status_code=303)
+        dest = _safe_next_path(next_path)
+        response = RedirectResponse(
+            url=_with_site(dest, site.id),
+            status_code=303,
+        )
         return _set_site_cookie(response, site.id)
 
     @app.get("/pages", response_class=HTMLResponse)
@@ -638,40 +706,62 @@ def create_app() -> FastAPI:
         q: str = Query(default=""),
         site: str = Query(default=""),
     ) -> HTMLResponse:
-        _root, database_path, _mirror, _current = get_paths(request, site)
-        pages: list[Any] = []
-        if _current is None:
+        root = _project_root()
+        _ensure_registry()
+        sites = load_registry(root)
+        if not sites:
             return RedirectResponse(url="/sites?error=Add+a+site+first", status_code=303)
-        if database_path.exists():
-            conn = db_connect(database_path)
-            try:
-                if q.strip():
-                    like = f"%{q.strip()}%"
-                    pages = conn.execute(
-                        """
-                        SELECT url, title, status_code, mirror_path, fetched_at
-                        FROM pages
-                        WHERE COALESCE(title,'') LIKE ? OR url LIKE ?
-                        ORDER BY fetched_at DESC
-                        LIMIT 200
-                        """,
-                        (like, like),
-                    ).fetchall()
-                else:
-                    pages = fetch_recent_pages(conn, limit=200)
-            finally:
-                conn.close()
-        return TEMPLATES.TemplateResponse(
-            request,
-            "pages.html",
-            {"active": "pages", "pages": pages, "q": q},
-        )
+        explicit = (site or "").strip()
+        current = resolve_site(root, explicit) if explicit else None
+        pages: list[Any] = []
+        if current is not None:
+            _root, database_path, _mirror, _current = get_paths(
+                request, current.id, cookie_fallback=False
+            )
+            if database_path.exists():
+                conn = db_connect(database_path)
+                try:
+                    if q.strip():
+                        like = f"%{q.strip()}%"
+                        pages = conn.execute(
+                            """
+                            SELECT url, title, status_code, mirror_path, fetched_at
+                            FROM pages
+                            WHERE COALESCE(title,'') LIKE ? OR url LIKE ?
+                            ORDER BY fetched_at DESC
+                            LIMIT 200
+                            """,
+                            (like, like),
+                        ).fetchall()
+                    else:
+                        pages = fetch_recent_pages(conn, limit=200)
+                finally:
+                    conn.close()
+        ctx = {
+            "active": "pages",
+            "pages": pages,
+            "q": q,
+            **_site_pick_vars(
+                sites,
+                current,
+                next_path="/pages",
+                hint="Pages are stored per domain. Pick a site to browse crawled HTML rows.",
+            ),
+        }
+        return TEMPLATES.TemplateResponse(request, "pages.html", ctx)
 
-    def _stats_payload(request: Request, site: str = "") -> dict[str, Any]:
-        _root, database_path, mirror_path, current = get_paths(request, site)
+    def _stats_payload(
+        request: Request,
+        site: str = "",
+        *,
+        cookie_fallback: bool = True,
+    ) -> dict[str, Any]:
+        _root, database_path, mirror_path, current = get_paths(
+            request, site, cookie_fallback=cookie_fallback
+        )
         payload: dict[str, Any] = {
-            "crawler_active": unit_active("dark-crawler.service"),
-            "tor_active": unit_active("dark-crawler-tor.service"),
+            "crawler_active": crawler_active(_project_root()),
+            "tor_active": tor_reachable(),
             "database": str(database_path) if current else "",
             "mirror": str(mirror_path) if current else "",
             "site_id": current.id if current else "",
@@ -700,7 +790,18 @@ def create_app() -> FastAPI:
     def api_page(request: Request, site: str = Query(default="")) -> HTMLResponse:
         import json
 
-        payload = _stats_payload(request, site)
+        root = _project_root()
+        _ensure_registry()
+        sites = load_registry(root)
+        if not sites:
+            return RedirectResponse(url="/sites?error=Add+a+site+first", status_code=303)
+        explicit = (site or "").strip()
+        current = resolve_site(root, explicit) if explicit else None
+        payload = _stats_payload(
+            request,
+            current.id if current else "",
+            cookie_fallback=False,
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "api.html",
@@ -709,15 +810,24 @@ def create_app() -> FastAPI:
                 "payload": payload,
                 "payload_json": json.dumps(payload, indent=2, ensure_ascii=False),
                 "raw_url": _with_site("/api/stats", str(payload.get("site_id") or "")),
+                **_site_pick_vars(
+                    sites,
+                    current,
+                    next_path="/api",
+                    hint="API preview can be scoped to one site. Pick a domain for site-specific stats.",
+                ),
             },
         )
 
     @app.get("/api/stats")
     def api_stats(request: Request, site: str = Query(default="")) -> dict[str, Any]:
-        return _stats_payload(request, site)
+        # JSON endpoint keeps cookie fallback for scripts that already unlocked the UI.
+        return _stats_payload(request, site, cookie_fallback=True)
 
-    def _safe_mirror_target(request: Request, rel: str) -> Path:
-        _root, _db, mirror_path, current = get_paths(request)
+    def _safe_mirror_target(request: Request, rel: str, site: str = "") -> Path:
+        _root, _db, mirror_path, current = get_paths(
+            request, site, cookie_fallback=False
+        )
         if current is None:
             raise HTTPException(status_code=404, detail="No site selected")
         mirror_path = mirror_path.resolve()
@@ -728,19 +838,49 @@ def create_app() -> FastAPI:
 
     @app.get("/mirror/", response_class=HTMLResponse)
     @app.get("/mirror/{rel_path:path}", response_class=HTMLResponse)
-    def mirror_browser(request: Request, rel_path: str = "") -> HTMLResponse:
-        target = _safe_mirror_target(request, rel_path)
+    def mirror_browser(
+        request: Request,
+        rel_path: str = "",
+        site: str = Query(default=""),
+    ) -> HTMLResponse:
+        root = _project_root()
+        _ensure_registry()
+        sites = load_registry(root)
+        if not sites:
+            return RedirectResponse(url="/sites?error=Add+a+site+first", status_code=303)
+        explicit = (site or "").strip()
+        current = resolve_site(root, explicit) if explicit else None
+        pick = _site_pick_vars(
+            sites,
+            current,
+            next_path="/mirror/",
+            hint="The HTML mirror is per domain. Pick a site to browse saved pages and assets.",
+        )
+        if current is None:
+            return TEMPLATES.TemplateResponse(
+                request,
+                "mirror_browser.html",
+                {
+                    "active": "mirror",
+                    "is_file": False,
+                    "rel_path": "",
+                    "crumbs": [],
+                    "entries": [],
+                    **pick,
+                },
+            )
+
+        target = _safe_mirror_target(request, rel_path, current.id)
+        site_q = f"?site={quote(current.id)}"
         crumbs = []
         parts = [p for p in rel_path.split("/") if p]
         acc: list[str] = []
         for part in parts:
             acc.append(part)
-            crumbs.append(
-                {
-                    "name": part,
-                    "href": "/mirror/" + quote("/".join(acc)) if part != parts[-1] or target.is_dir() else "",
-                }
-            )
+            href = ""
+            if part != parts[-1] or target.is_dir():
+                href = "/mirror/" + quote("/".join(acc)) + site_q
+            crumbs.append({"name": part, "href": href})
         if target.exists() and target.is_file():
             return TEMPLATES.TemplateResponse(
                 request,
@@ -751,6 +891,7 @@ def create_app() -> FastAPI:
                     "rel_path": rel_path,
                     "crumbs": crumbs,
                     "entries": [],
+                    **pick,
                 },
             )
 
@@ -767,7 +908,7 @@ def create_app() -> FastAPI:
                 {
                     "name": child.name,
                     "is_dir": child.is_dir(),
-                    "href": "/mirror/" + quote(child_rel),
+                    "href": "/mirror/" + quote(child_rel) + site_q,
                     "detail": detail,
                 }
             )
@@ -780,12 +921,17 @@ def create_app() -> FastAPI:
                 "rel_path": rel_path,
                 "crumbs": crumbs,
                 "entries": entries,
+                **pick,
             },
         )
 
     @app.get("/mirror-raw/{rel_path:path}")
-    def mirror_raw(request: Request, rel_path: str) -> FileResponse:
-        target = _safe_mirror_target(request, rel_path)
+    def mirror_raw(
+        request: Request,
+        rel_path: str,
+        site: str = Query(default=""),
+    ) -> FileResponse:
+        target = _safe_mirror_target(request, rel_path, site)
         if not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         media = "text/html" if target.suffix.lower() in {".html", ".htm"} else None
@@ -805,29 +951,46 @@ def create_app() -> FastAPI:
         q: str = Query(default=""),
         page: int = Query(default=1, ge=1),
         pk: str = Query(default=""),
+        site: str = Query(default=""),
     ) -> HTMLResponse:
         if table not in DB_TABLES:
             raise HTTPException(status_code=404, detail="Unknown table")
         spec = DB_TABLES[table]
-        _root, database_path, _mirror, _current = get_paths(request)
+        root = _project_root()
+        _ensure_registry()
+        sites = load_registry(root)
+        if not sites:
+            return RedirectResponse(url="/sites?error=Add+a+site+first", status_code=303)
+        explicit = (site or "").strip()
+        current = resolve_site(root, explicit) if explicit else None
+        pick = _site_pick_vars(
+            sites,
+            current,
+            next_path="/db",
+            hint="SQLite tables are per domain. Pick a site to browse its database.",
+        )
+        empty = {
+            "active": "db",
+            "mode": "list",
+            "tables": [(name, 0) for name in DB_TABLES],
+            "table": table,
+            "columns": spec["columns"],
+            "pk": spec["pk"],
+            "rows": [],
+            "total": 0,
+            "page": 1,
+            "pages": 1,
+            "q": q,
+            **pick,
+        }
+        if current is None:
+            return TEMPLATES.TemplateResponse(request, "db.html", empty)
+
+        _root, database_path, _mirror, _current = get_paths(
+            request, current.id, cookie_fallback=False
+        )
         if not database_path.exists():
-            return TEMPLATES.TemplateResponse(
-                request,
-                "db.html",
-                {
-                    "active": "db",
-                    "mode": "list",
-                    "tables": [(name, 0) for name in DB_TABLES],
-                    "table": table,
-                    "columns": spec["columns"],
-                    "pk": spec["pk"],
-                    "rows": [],
-                    "total": 0,
-                    "page": 1,
-                    "pages": 1,
-                    "q": q,
-                },
-            )
+            return TEMPLATES.TemplateResponse(request, "db.html", empty)
 
         conn = db_connect(database_path)
         try:
@@ -857,6 +1020,7 @@ def create_app() -> FastAPI:
                         "row": detail,
                         "q": q,
                         "page": page,
+                        **pick,
                     },
                 )
 
@@ -901,6 +1065,7 @@ def create_app() -> FastAPI:
                 "page": page,
                 "pages": pages,
                 "q": query,
+                **pick,
             },
         )
 
@@ -912,27 +1077,77 @@ def create_app() -> FastAPI:
         error: str = "",
         site: str = Query(default=""),
     ) -> HTMLResponse:
-        current = _site_from_request(request, site)
-        if current is None:
+        root = _project_root()
+        _ensure_registry()
+        sites = load_registry(root)
+        if not sites:
             return RedirectResponse(url="/sites?error=Add+a+site+first", status_code=303)
-        scoped, paths = _scoped_config(current)
-        return TEMPLATES.TemplateResponse(
-            request,
-            "auth.html",
-            {
-                "active": "auth",
-                "session": session_status(),
-                "secrets": secrets_status(
-                    scoped.project_root,
-                    site_secrets=paths.secrets,
-                ),
-                "cookie_path": str(paths.cookies),
-                "names": cookie_names(paths.cookies),
-                "flash": flash,
-                "flash_ok": bool(ok),
-                "error": error,
+
+        # Auth requires an explicit site choice (?site=). Do not auto-pick from cookie.
+        explicit = (site or "").strip()
+        current = resolve_site(root, explicit) if explicit else None
+        if explicit and current is None:
+            return RedirectResponse(
+                url=f"/auth?error={quote('Unknown site')}",
+                status_code=303,
+            )
+
+        alert = ""
+        alert_kind = ""
+        if current is not None:
+            paths_preview = site_paths(root, current.id)
+            alert = read_alert(paths_preview.database)
+            alert_kind = read_alert_kind(paths_preview.database)
+
+        context: dict[str, Any] = {
+            "active": "auth",
+            "auth_sites": sites,
+            "session": session_status(),
+            "flash": flash,
+            "flash_ok": bool(ok),
+            "error": error,
+            "site_chosen": current is not None,
+            # Override cookie-based nav context: Auth only binds after explicit pick.
+            "site_id": current.id if current else "",
+            "current_site": current,
+            "alert": alert,
+            "alert_kind": alert_kind,
+            "secrets": {
+                "configured": False,
+                "username": "",
+                "source": "",
+                "path": "",
             },
+            "cookie_path": "",
+            "names": [],
+        }
+        if current is not None:
+            scoped, paths = _scoped_config(current)
+            context.update(
+                {
+                    "secrets": secrets_status(
+                        scoped.project_root,
+                        site_secrets=paths.secrets,
+                    ),
+                    "cookie_path": str(paths.cookies),
+                    "names": cookie_names(paths.cookies),
+                }
+            )
+        return TEMPLATES.TemplateResponse(request, "auth.html", context)
+
+    @app.post("/auth/select")
+    def auth_select(site_id: str = Form(default="")) -> RedirectResponse:
+        site = resolve_site(_project_root(), site_id)
+        if site is None:
+            return RedirectResponse(
+                url=f"/auth?error={quote('Unknown site')}",
+                status_code=303,
+            )
+        response = RedirectResponse(
+            url=_with_site("/auth", site.id),
+            status_code=303,
         )
+        return _set_site_cookie(response, site.id)
 
     @app.post("/auth/session/start")
     def auth_session_start(
@@ -1210,9 +1425,34 @@ def create_app() -> FastAPI:
         error: str = "",
         site: str = Query(default=""),
     ) -> HTMLResponse:
-        current = _site_from_request(request, site)
-        if current is None:
+        root = _project_root()
+        _ensure_registry()
+        sites = load_registry(root)
+        if not sites:
             return RedirectResponse(url="/sites?error=Add+a+site+first", status_code=303)
+        explicit = (site or "").strip()
+        current = resolve_site(root, explicit) if explicit else None
+        pick = _site_pick_vars(
+            sites,
+            current,
+            next_path="/cookies",
+            hint="Cookies are stored per domain. Pick a site before pasting a session.",
+        )
+        if current is None:
+            return TEMPLATES.TemplateResponse(
+                request,
+                "cookies.html",
+                {
+                    "active": "cookies",
+                    "cookie_path": "",
+                    "names": [],
+                    "saved": False,
+                    "saved_count": 0,
+                    "restarted": False,
+                    "error": error,
+                    **pick,
+                },
+            )
         _scoped, paths = _scoped_config(current)
         return TEMPLATES.TemplateResponse(
             request,
@@ -1225,6 +1465,7 @@ def create_app() -> FastAPI:
                 "saved_count": count,
                 "restarted": bool(restarted),
                 "error": error,
+                **pick,
             },
         )
 
@@ -1271,9 +1512,27 @@ def create_app() -> FastAPI:
         request: Request,
         site: str = Form(default=""),
     ) -> RedirectResponse:
-        start_crawler_unit()
+        ok, message = start_crawler("restart", _project_root())
         current = _site_from_request(request, site)
-        url = _with_site("/", current.id if current else "")
+        site_id = current.id if current else ""
+        if ok:
+            url = _with_site(f"/?ok=1&flash={quote(message)}", site_id)
+        else:
+            url = _with_site(f"/?error={quote(message)}", site_id)
+        return RedirectResponse(url=url, status_code=303)
+
+    @app.post("/actions/stop-crawl")
+    def stop_crawl(
+        request: Request,
+        site: str = Form(default=""),
+    ) -> RedirectResponse:
+        ok, message = stop_crawler(_project_root())
+        current = _site_from_request(request, site)
+        site_id = current.id if current else ""
+        if ok:
+            url = _with_site(f"/?ok=1&flash={quote(message)}", site_id)
+        else:
+            url = _with_site(f"/?error={quote(message)}", site_id)
         return RedirectResponse(url=url, status_code=303)
 
     return app

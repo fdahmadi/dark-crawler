@@ -13,7 +13,8 @@
   {% endif %}
 
   {% if sites %}
-  <table>
+  <div class="table-scroll">
+  <table class="sites-table">
     <thead>
       <tr>
         <th>Host</th>
@@ -21,7 +22,7 @@
         <th>Pages</th>
         <th>State</th>
         <th>Alert</th>
-        <th></th>
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -47,12 +48,13 @@
           <span class="muted">—</span>
           {% endif %}
         </td>
-        <td>
-          <div class="actions">
+        <td class="site-actions-cell">
+          <div class="actions site-actions">
             <form method="post" action="/sites/select">
               <input type="hidden" name="site_id" value="{{ site.id }}">
               <button class="btn" type="submit">Open</button>
             </form>
+            <a class="btn secondary" href="/auth?site={{ site.id }}">Auth</a>
             <form method="post" action="/sites/toggle">
               <input type="hidden" name="site_id" value="{{ site.id }}">
               <input type="hidden" name="enabled" value="{% if site.enabled %}0{% else %}1{% endif %}">
@@ -68,6 +70,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="empty">No sites yet. Add a seed URL below.</p>
   {% endif %}

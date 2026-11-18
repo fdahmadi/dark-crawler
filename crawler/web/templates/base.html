@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=4">
+  <link rel="stylesheet" href="/static/app.css?v=9">
 </head>
 <body>
   <div class="wrap">
@@ -18,19 +18,17 @@
       </div>
       <nav class="nav">
         <a href="/sites" class="{% if active == 'sites' %}active{% endif %}">Sites</a>
-        <a href="/{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'status' %}active{% endif %}">Status</a>
-        <a href="/pages{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'pages' %}active{% endif %}">Pages</a>
-        <a href="/db{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'db' %}active{% endif %}">Database</a>
-        <a href="/auth{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'auth' %}active{% endif %}">Auth</a>
-        <a href="/cookies{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'cookies' %}active{% endif %}">Cookies</a>
-        <a href="/mirror/{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'mirror' %}active{% endif %}">Mirror</a>
-        <a href="/api{% if site_id %}?site={{ site_id }}{% endif %}" class="{% if active == 'api' %}active{% endif %}">API</a>
+        <a href="/" class="{% if active == 'status' %}active{% endif %}">Status</a>
+        <a href="/pages" class="{% if active == 'pages' %}active{% endif %}">Pages</a>
+        <a href="/db" class="{% if active == 'db' %}active{% endif %}">Database</a>
+        <a href="/auth" class="{% if active == 'auth' %}active{% endif %}">Auth</a>
+        <a href="/cookies" class="{% if active == 'cookies' %}active{% endif %}">Cookies</a>
+        <a href="/mirror/" class="{% if active == 'mirror' %}active{% endif %}">Mirror</a>
+        <a href="/api" class="{% if active == 'api' %}active{% endif %}">API</a>
       </nav>
     </header>
     {% if current_site %}
     <p class="site-bar muted">Viewing site <span class="mono">{{ current_site.short_host }}</span> · hash <span class="mono">{{ current_site.id }}</span>{% if not current_site.enabled %} · <span class="badge idle">disabled</span>{% endif %} · <a href="/sites">manage</a></p>
-    {% elif active != 'sites' %}
-    <p class="site-bar muted">No site selected. <a href="/sites">Add or open a site</a>.</p>
     {% endif %}
     {% if alert %}
     <div class="alert-banner" role="alert">{{ alert }} <a href="/auth{% if site_id %}?site={{ site_id }}{% endif %}">Fix on Auth</a></div>
