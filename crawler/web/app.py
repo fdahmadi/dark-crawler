@@ -22,6 +22,7 @@ from crawler.auth_login import perform_login
 from crawler.browser_session import (
     browser_ws_port,
     export_browser_cookies,
+    login_open_url,
     session_status,
     start_browser_session,
     stop_browser_session,
@@ -38,7 +39,7 @@ from crawler.cookies_io import (
 )
 from crawler.db import utc_now
 from crawler.parser import normalize_url
-from crawler.secrets import save_forum_secrets, secrets_status
+from crawler.secrets import load_forum_secrets, save_forum_secrets, secrets_status
 from crawler.sites import (
     SiteRecord,
     add_site,
@@ -1157,10 +1158,16 @@ def create_app() -> FastAPI:
         current = _site_from_request(request, site)
         if current is None:
             return RedirectResponse(url="/sites?error=Add+a+site+first", status_code=303)
+        scoped, paths = _scoped_config(current)
+        has_secrets = (
+            load_forum_secrets(scoped.project_root, site_secrets=paths.secrets) is not None
+        )
+        open_url = login_open_url(current.seed_url) if has_secrets else current.seed_url
         write_browser_target(
             _project_root(),
             site_id=current.id,
             seed_url=current.seed_url,
+            open_url=open_url,
         )
         ok, message = start_browser_session()
         target = _with_site(
@@ -1330,8 +1337,8 @@ def create_app() -> FastAPI:
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Captcha browser session is not reachable. "
-                    "Press Open captcha session first."
+                    "Browser session is not reachable. "
+                    "Press Open browser session first."
                 ),
             ) from exc
         excluded = {"content-encoding", "transfer-encoding", "content-length", "connection"}

@@ -21,6 +21,7 @@ fi
 # Prefer the site selected by the Web UI Auth page.
 TARGET_FILE="$APP_DIR/data/browser-target.json"
 SEED_URL="${BROWSER_SEED_URL:-}"
+OPEN_URL="${BROWSER_OPEN_URL:-}"
 SITE_ID="${BROWSER_SITE_ID:-}"
 if [[ -z "$SEED_URL" && -f "$TARGET_FILE" ]]; then
   SEED_URL="$("$PYTHON_BIN" - <<PY
@@ -28,6 +29,14 @@ import json
 from pathlib import Path
 raw = json.loads(Path(r"${TARGET_FILE}").read_text(encoding="utf-8"))
 print((raw.get("seed_url") or "").strip())
+PY
+)"
+  OPEN_URL="$("$PYTHON_BIN" - <<PY
+import json
+from pathlib import Path
+raw = json.loads(Path(r"${TARGET_FILE}").read_text(encoding="utf-8"))
+seed = (raw.get("seed_url") or "").strip()
+print(((raw.get("open_url") or "").strip() or seed))
 PY
 )"
   SITE_ID="$("$PYTHON_BIN" - <<PY
@@ -51,12 +60,40 @@ if [[ -z "$SEED_URL" ]]; then
   echo "No seed URL: set browser-target.json via Auth page or BROWSER_SEED_URL" >&2
   exit 1
 fi
+if [[ -z "$OPEN_URL" ]]; then
+  OPEN_URL="$SEED_URL"
+fi
 
 if [[ -n "$SITE_ID" ]]; then
   PROFILE_DIR="${BROWSER_PROFILE_DIR:-$APP_DIR/data/sites/$SITE_ID/browser-profile}"
 fi
 
 mkdir -p "$PROFILE_DIR"
+
+AUTOFILL_EXT=""
+if [[ -n "$SITE_ID" ]]; then
+  AUTOFILL_EXT="$("$PYTHON_BIN" - <<PY
+from pathlib import Path
+from crawler.browser_autofill import install_autofill_for_site
+root = Path(r"${APP_DIR}")
+profile = Path(r"${PROFILE_DIR}")
+ext = install_autofill_for_site(root, site_id=r"${SITE_ID}", profile=profile)
+print(str(ext) if ext else "")
+PY
+)"
+fi
+
+UNSIGNED_PREFS=""
+if [[ -n "$AUTOFILL_EXT" ]]; then
+  UNSIGNED_PREFS=$(cat <<'EOF'
+user_pref("xpinstall.signatures.required", false);
+user_pref("extensions.langpacks.signatures.required", false);
+user_pref("extensions.autoDisableScopes", 0);
+user_pref("extensions.enabledScopes", 15);
+EOF
+)
+fi
+
 cat > "$PROFILE_DIR/user.js" <<EOF
 user_pref("network.proxy.type", 1);
 user_pref("network.proxy.socks", "${SOCKS_HOST}");
@@ -66,9 +103,10 @@ user_pref("network.proxy.socks_version", 5);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("datareporting.policy.dataSubmissionEnabled", false);
 user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
-user_pref("browser.startup.homepage", "${SEED_URL}");
+user_pref("browser.startup.homepage", "${OPEN_URL}");
 user_pref("startup.homepage_welcome_url", "");
 user_pref("startup.homepage_welcome_url.additional", "");
+${UNSIGNED_PREFS}
 EOF
 
 export DISPLAY=":${DISPLAY_NUM}"
@@ -126,14 +164,28 @@ WS_PID=$!
 sleep 1
 
 if [[ "$(basename "$FIREFOX_BIN")" == firefox* ]]; then
-  "$FIREFOX_BIN" --profile "$PROFILE_DIR" --no-remote "$SEED_URL" \
+  "$FIREFOX_BIN" --profile "$PROFILE_DIR" --no-remote "$OPEN_URL" \
     >/tmp/dark-crawler-firefox.log 2>&1 &
 else
-  # Chromium fallback (onion DNS may be weaker than Firefox SOCKS remote DNS).
-  "$FIREFOX_BIN" --user-data-dir="$PROFILE_DIR" \
-    --proxy-server="socks5://${SOCKS_HOST}:${SOCKS_PORT}" \
-    --no-first-run --disable-gpu --window-size=1280,900 \
-    "$SEED_URL" >/tmp/dark-crawler-firefox.log 2>&1 &
+  # Chromium fallback: force DNS through SOCKS so .onion resolves.
+  CDP_PORT="${BROWSER_CDP_PORT:-9333}"
+  CHROME_ARGS=(
+    --user-data-dir="$PROFILE_DIR"
+    --proxy-server="socks5://${SOCKS_HOST}:${SOCKS_PORT}"
+    --host-resolver-rules=MAP\ *\ ~NOTFOUND\ ,\ EXCLUDE\ 127.0.0.1
+    --test-type
+    --password-store=basic
+    --remote-debugging-port="${CDP_PORT}"
+    --remote-allow-origins=*
+    --no-first-run
+    --disable-gpu
+    --window-size=1280,900
+  )
+  if [[ -n "$AUTOFILL_EXT" ]]; then
+    CHROME_ARGS+=(--load-extension="$AUTOFILL_EXT")
+    CHROME_ARGS+=(--disable-extensions-except="$AUTOFILL_EXT")
+  fi
+  "$FIREFOX_BIN" "${CHROME_ARGS[@]}" "$OPEN_URL" >/tmp/dark-crawler-firefox.log 2>&1 &
 fi
 FIREFOX_PID=$!
 

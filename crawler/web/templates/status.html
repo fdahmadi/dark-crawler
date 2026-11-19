@@ -50,7 +50,7 @@
   {% if alert_kind == 'captcha' or captcha_hint %}
   <p><span class="badge warn">captcha</span> Human-verification wall detected. <a href="/auth?site={{ site_id }}">Solve captcha on Auth</a>.</p>
   {% elif alert_kind == 'login' %}
-  <p><span class="badge warn">login</span> Login required. <a href="/auth?site={{ site_id }}">Open Auth and press Login</a>.</p>
+  <p><span class="badge warn">login</span> Login required. <a href="/auth?site={{ site_id }}">Open Auth</a>, log in in the browser session, then Save cookies.</p>
   {% elif alert_kind == 'forbidden_session' %}
   <p><span class="badge warn">session</span> Session looks expired. <a href="/auth?site={{ site_id }}">Refresh captcha/login on Auth</a>.</p>
   {% endif %}

@@ -126,9 +126,11 @@ http://SERVER_IP:19810/auth?token=YOUR_TOKEN
 
 Flow:
 
-1. **Captcha** — **Open captcha session** (Firefox behind Tor + noVNC). Solve it, then **Save session cookies** into that site’s folder.
-2. **Login** — enter username/password on the Auth page (saved under that site’s `data/sites/<hash>/secrets.yaml`), then press **Login**.
-3. Cookie paste on `/cookies` remains an advanced fallback.
+1. On **Auth**, save username/password once for the site (autofills later).
+2. **Open browser session** (Firefox/Chrome behind Tor + noVNC or headed desktop).
+3. In that browser: solve captcha if shown; on the login form, credentials autofill — submit login.
+4. **Save session cookies** into that site’s folder, then stop the session.
+5. Cookie paste on `/cookies` (and optional automated Login) remains an advanced fallback.
 
 The interactive browser is reverse-proxied under `/auth/session/` and auto-stops after ~30 minutes idle. Keep `WEB_UI_TOKEN` secret.
 

@@ -4,7 +4,7 @@
 {% block content %}
 <section class="panel">
   <h2>1. Choose site</h2>
-  <p class="muted">Auth is per domain. Pick which forum you want to configure, then continue with captcha / login for that site only.</p>
+  <p class="muted">Auth is per domain. Pick which forum you want to unlock.</p>
   {% if auth_sites %}
   <form method="post" action="/auth/select" class="auth-site-pick">
     <label class="field">
@@ -40,63 +40,24 @@
   {% elif alert %}
   <p><span class="badge warn">blocked</span> {{ alert }}</p>
   {% else %}
-  <p class="muted">No auth alert right now. You can still refresh captcha or login if pages look wrong.</p>
+  <p class="muted">No auth alert right now. You can still open a session if pages look wrong.</p>
+  {% endif %}
+
+  {% if flash %}
+  <p class="{% if flash_ok %}badge ok{% else %}badge bad{% endif %}" style="display:inline-block;margin-top:0.75rem;">{{ flash }}</p>
+  {% endif %}
+  {% if error %}
+  <p class="badge bad" style="display:inline-block;margin-top:0.75rem;">{{ error }}</p>
   {% endif %}
 
   <div class="auth-steps">
-    <div class="auth-step {% if alert_kind == 'captcha' %}focus{% endif %}">
-      <h3>2. Captcha / browser session</h3>
-      <p class="muted">Opens a Tor browser for this site so cookies can be saved for the crawler.</p>
-      <ol class="howto">
-        <li>Press <strong>Open captcha session</strong> — a browser window opens through Tor.</li>
-        <li>If you see a captcha / “verify humanity” page, solve it. If the site has <em>no</em> captcha, just wait until the normal forum (or login) page loads.</li>
-        <li>You do <strong>not</strong> need to log in inside that browser unless you want to. Login can be done with the Login button in step 3.</li>
-        <li>Come back here and press <strong>Save session cookies</strong> — that is the important step.</li>
-        <li>Then press <strong>Stop session</strong> (or close the browser window).</li>
-      </ol>
-      <div class="actions">
-        {% if session.active %}
-        <span class="badge ok session-status">session running</span>
-        {% else %}
-        <form method="post" action="/auth/session/start">
-          <input type="hidden" name="site" value="{{ site_id }}">
-          <button class="btn" type="submit">Open captcha session</button>
-        </form>
-        {% endif %}
-        {% if session.active %}
-        <form method="post" action="/auth/session/save">
-          <input type="hidden" name="site" value="{{ site_id }}">
-          <button class="btn" type="submit">Save session cookies</button>
-        </form>
-        <form method="post" action="/auth/session/stop">
-          <input type="hidden" name="site" value="{{ site_id }}">
-          <button class="btn secondary" type="submit">Stop session</button>
-        </form>
-        {% endif %}
-      </div>
-      {% if session.active and session.headed %}
-      <p class="muted"><span class="badge ok">now</span> The Tor browser is open on your desktop. When the forum page is visible (captcha done or none), press <strong>Save session cookies</strong>, then Stop.</p>
-      {% elif session.active %}
-      <p class="muted"><span class="badge ok">now</span> Use the frame below (or
-        <a href="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify" target="_blank" rel="noopener">full window</a>).
-        When the forum page is visible, press <strong>Save session cookies</strong>, then Stop.</p>
-      <div class="session-frame-wrap">
-        <iframe
-          class="session-frame"
-          title="Remote captcha browser"
-          src="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify"
-        ></iframe>
-      </div>
-      {% endif %}
-    </div>
-
-    <div class="auth-step {% if alert_kind == 'login' or alert_kind == 'forbidden_session' %}focus{% endif %}">
-      <h3>3. Credentials + Login</h3>
+    <div class="auth-step {% if not secrets.configured %}focus{% endif %}">
+      <h3>2. Saved credentials</h3>
       <p class="muted">
-        Saved per site at <span class="mono">{{ secrets.path }}</span>
+        Save once per site. When the browser session opens a login form, username/password are filled automatically.
         {% if secrets.configured %}
-          · user <span class="mono">{{ secrets.username }}</span>
-          · source <span class="mono">{{ secrets.source }}</span>
+          · stored user <span class="mono">{{ secrets.username }}</span>
+          · <span class="mono">{{ secrets.path }}</span>
         {% else %}
           · not set yet
         {% endif %}
@@ -112,42 +73,91 @@
           <input name="password" type="password" value="" {% if not secrets.configured %}required{% endif %} autocomplete="current-password" placeholder="{% if secrets.configured %}leave blank to keep current password{% else %}password{% endif %}" style="width:100%;padding:0.55rem;border:1px solid var(--line);border-radius:4px;">
         </p>
         <div class="actions">
-          <button class="btn secondary" type="submit">Save credentials</button>
+          <button class="btn" type="submit">Save credentials</button>
         </div>
       </form>
-      <div class="actions" style="margin-top:0.75rem;">
-        <form method="post" action="/auth/login">
+    </div>
+
+    <div class="auth-step {% if secrets.configured %}focus{% endif %}" style="margin-top:1rem;">
+      <h3>3. Browser session — captcha + login</h3>
+      <p class="muted">One Tor browser for this site. With saved credentials it opens the <strong>login page</strong> directly and autofills the form.</p>
+      <ol class="howto">
+        <li>Save credentials above (once).</li>
+        <li>Press <strong>Open browser session</strong> — login URL opens (not the homepage).</li>
+        <li>Solve captcha if shown; username/password should already be filled — submit login.</li>
+        <li>When the normal logged-in forum is visible, press <strong>Save session cookies</strong> or just <strong>Stop session</strong> (Stop also auto-saves).</li>
+      </ol>
+      <div class="actions">
+        {% if session.active %}
+        <span class="badge ok session-status">session running</span>
+        {% if session.cdp_ready %}
+        <span class="badge ok">cookie export ready</span>
+        {% else %}
+        <span class="badge warn">cookie export warming up</span>
+        {% endif %}
+        {% else %}
+        <form method="post" action="/auth/session/start">
           <input type="hidden" name="site" value="{{ site_id }}">
-          <button class="btn" type="submit" {% if not secrets.configured %}disabled{% endif %}>Login</button>
+          <button class="btn" type="submit">Open browser session</button>
         </form>
+        {% endif %}
+        {% if session.active %}
+        <form method="post" action="/auth/session/save">
+          <input type="hidden" name="site" value="{{ site_id }}">
+          <button class="btn" type="submit" {% if not session.cdp_ready %}disabled title="Wait until cookie export ready"{% endif %}>Save session cookies</button>
+        </form>
+        <form method="post" action="/auth/session/stop">
+          <input type="hidden" name="site" value="{{ site_id }}">
+          <button class="btn secondary" type="submit">Stop session</button>
+        </form>
+        {% endif %}
       </div>
-      <p class="muted">If the site needs a member login: Save credentials, then press Login. Password is never shown again after save.</p>
+      {% if not secrets.configured and not session.active %}
+      <p class="muted"><span class="badge warn">tip</span> Save credentials first so the login form autofills.</p>
+      {% endif %}
+      {% if session.active and session.headed %}
+      <p class="muted"><span class="badge ok">now</span> The Tor browser is open on your desktop. Finish captcha + login there, then <strong>Save</strong> or <strong>Stop</strong> (both export cookies).</p>
+      {% elif session.active %}
+      <p class="muted"><span class="badge ok">now</span> Use the frame below (or
+        <a href="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify" target="_blank" rel="noopener">full window</a>).
+        Finish captcha + login, then <strong>Save session cookies</strong>.</p>
+      <div class="session-frame-wrap">
+        <iframe
+          class="session-frame"
+          title="Auth browser session"
+          src="/auth/session/vnc.html?autoconnect=true&resize=scale&path=auth/session/websockify"
+        ></iframe>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="auth-step" style="margin-top:1rem;">
+      <h3>4. Start crawling</h3>
+      <ol class="howto">
+        <li>After a successful <strong>Save session cookies</strong>, the crawler restarts automatically when possible.</li>
+        <li>If it did not restart, open <a href="/?site={{ site_id }}">Status</a> and press <strong>Start crawl</strong>.</li>
+        <li>Public sites with no captcha/login can skip Auth and start from Status directly.</li>
+      </ol>
     </div>
   </div>
-
-  <div class="auth-step" style="margin-top:1rem;">
-    <h3>4. Start crawling</h3>
-    <ol class="howto">
-      <li><strong>Site needs captcha + login:</strong> do steps 2 → Save cookies → step 3 Login. After a successful Login (or Save cookies), the crawler is restarted automatically when possible.</li>
-      <li><strong>Site needs only captcha:</strong> step 2 → Save cookies (skip Login).</li>
-      <li><strong>Site is public (no captcha, no login):</strong> skip Auth. On <a href="/sites">Sites</a> keep the forum <em>enabled</em>, then open <a href="/?site={{ site_id }}">Status</a> and press <strong>Start crawl</strong>.</li>
-      <li>If restart did not happen, use <strong>Start crawl</strong> on Status (local/dev starts a background process).</li>
-    </ol>
-  </div>
-
-  {% if flash %}
-  <p class="{% if flash_ok %}badge ok{% else %}badge bad{% endif %}" style="display:inline-block;margin-top:1rem;">{{ flash }}</p>
-  {% endif %}
-  {% if error %}
-  <p class="badge bad" style="display:inline-block;margin-top:1rem;">{{ error }}</p>
-  {% endif %}
 </section>
 
 <section class="panel">
   <h2>Advanced fallback</h2>
-  <p class="muted">Still works: paste a Cookie header from Tor Browser on the
+  <p class="muted">Prefer the browser session above. These are only if that path fails.</p>
+  <p class="muted">Paste a Cookie header from Tor Browser on the
     <a href="/cookies?site={{ site_id }}">Cookies</a> page.</p>
   <p class="muted mono">cookies: {{ cookie_path }} · names: {{ names|join(', ') if names else '(none)' }}</p>
+
+  <details style="margin-top:1rem;">
+    <summary class="muted">Automated login (HTTP, no browser) — fails when captcha is on the login page</summary>
+    <div class="actions" style="margin-top:0.75rem;">
+      <form method="post" action="/auth/login">
+        <input type="hidden" name="site" value="{{ site_id }}">
+        <button class="btn secondary" type="submit" {% if not secrets.configured %}disabled{% endif %}>Try automated Login</button>
+      </form>
+    </div>
+  </details>
 </section>
 {% else %}
   {% if flash %}

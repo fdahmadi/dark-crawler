@@ -52,7 +52,8 @@ def detect_auth_wall(title: str | None, html: str) -> AuthWall | None:
             kind="captcha",
             message=(
                 "Captcha wall: the forum is asking for human verification. "
-                "Crawl stopped. Open Auth and solve the captcha session."
+                "Crawl stopped. Open Auth, finish captcha in the browser session, "
+                "then Save cookies."
             ),
         )
 
@@ -61,7 +62,8 @@ def detect_auth_wall(title: str | None, html: str) -> AuthWall | None:
             kind="login",
             message=(
                 "Login required: the forum is showing a login wall. "
-                "Crawl stopped. Open Auth and press Login."
+                "Crawl stopped. Open Auth, log in in the browser session, "
+                "then Save cookies."
             ),
         )
     return None
@@ -72,7 +74,8 @@ def forbidden_session_wall(reason: str = "readable page became forbidden") -> Au
         kind="forbidden_session",
         message=(
             f"Session expired: {reason}. "
-            "Crawl stopped. Open Auth to refresh captcha/login cookies."
+            "Crawl stopped. Open Auth, refresh captcha/login in the browser "
+            "session, then Save cookies."
         ),
     )
 

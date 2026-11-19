@@ -7,7 +7,7 @@
 {% if site_chosen %}
 <section class="panel">
   <h2>Paste the cookies from Tor Browser</h2>
-  <p>Prefer the guided flow on <a href="/auth?site={{ site_id }}">Auth</a> (remote captcha session + Login button). This page is the manual fallback: finish verification in Tor Browser, copy cookies, and paste them here.</p>
+  <p>Prefer the guided flow on <a href="/auth?site={{ site_id }}">Auth</a> (browser session: captcha + login, then Save cookies). This page is the manual fallback: finish verification in Tor Browser, copy cookies, and paste them here.</p>
   <ol>
     <li>In Tor Browser, open Developer Tools → Network, reload the forum, and copy the <span class="mono">Cookie</span> request header.</li>
     <li>Or export a Netscape <span class="mono">cookies.txt</span> and paste that file.</li>
